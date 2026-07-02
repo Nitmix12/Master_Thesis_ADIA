@@ -26,6 +26,7 @@ def plot_regime_history(
     show: bool = True,
 ) -> plt.Figure:
     spec = get_spec(k)
+    colors = spec.colors
     dates = features.index
     spxt_ret = features["SPXT"].astype(float)
     log_cum = np.log((1.0 + spxt_ret).cumprod())
@@ -41,7 +42,7 @@ def plot_regime_history(
         j = i + 1
         while j < len(labs) and int(labs[j]) == r:
             j += 1
-        color = REGIME_COLORS.get(r, "gray")
+        color = colors.get(r, REGIME_COLORS.get(r, "gray"))
         ax.axvspan(i - 0.5, j - 0.5, color=color, alpha=0.5, linewidth=0)
         i = j
 
@@ -57,7 +58,7 @@ def plot_regime_history(
 
     line = Line2D([0], [0], color="black", linewidth=2, label="SPXT (log cum return)")
     patches = [
-        Patch(facecolor=REGIME_COLORS[i], alpha=0.5, label=spec.names[i])
+        Patch(facecolor=colors.get(i, REGIME_COLORS.get(i, "gray")), alpha=0.5, label=spec.names[i])
         for i in range(k)
     ]
     ax.legend(handles=[line] + patches, loc="upper left", framealpha=0.9)

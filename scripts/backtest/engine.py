@@ -342,7 +342,7 @@ def run_strategy_comparison_cell(
     Run one strategy for K=4 and K=5 (and buy-and-hold once), plot, return metrics table.
     """
     from scripts.backtest.signals import load_walk_forward_signals
-    from scripts.backtest.strategies import STRATEGY_BUILDERS
+    from scripts.backtest.strategies import BENCHMARK_STRATEGY_KEYS, STRATEGY_BUILDERS
 
     if returns_panel is None:
         returns_panel = load_backtest_panel()
@@ -356,7 +356,7 @@ def run_strategy_comparison_cell(
     metrics_rows: list[pd.Series] = []
 
     def _run(k: int, sig: Any, tag: str) -> None:
-        if strategy_key == "buy_and_hold":
+        if strategy_key in BENCHMARK_STRATEGY_KEYS:
             w = builder(sig, soft=False)
         else:
             w = builder(sig, soft=bool(soft))
@@ -364,7 +364,7 @@ def run_strategy_comparison_cell(
         results[tag] = bt
         metrics_rows.append(compute_metrics(bt, monthly_contribution=monthly_contribution, label=tag))
 
-    if strategy_key == "buy_and_hold":
+    if strategy_key in BENCHMARK_STRATEGY_KEYS:
         _run(4, signals_k4, "K=4 / K=5 (same)")
     else:
         _run(4, signals_k4, f"K=4 {'soft' if soft else 'hard'}")

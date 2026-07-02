@@ -8,6 +8,7 @@ Two Hungarian steps (same design as old/04_Bloomberg_v3):
 Templates are taken from the *old* pipeline that produced good plots, not v1's
 derived/softened templates.
 
+K=3: Defensive, Inflation, Growth
 K=4: Crisis, Inflation, Steady State, Walking on Ice (Bloomberg v3)
 K=5: adds Bull Market (old/05_GMM_5reg) — separates low-vol equity rallies from Steady State
 """
@@ -26,6 +27,12 @@ from scipy.optimize import linear_sum_assignment
 # Regime metadata
 # ---------------------------------------------------------------------------
 
+REGIME_NAMES_3: Dict[int, str] = {
+    0: "Defensive",
+    1: "Inflation",
+    2: "Growth",
+}
+
 REGIME_NAMES_4: Dict[int, str] = {
     0: "Crisis",
     1: "Inflation",
@@ -41,6 +48,12 @@ REGIME_NAMES_5: Dict[int, str] = {
     4: "Bull Market",
 }
 
+REGIME_ORDER_3: Tuple[str, ...] = (
+    "Defensive",
+    "Inflation",
+    "Growth",
+)
+
 REGIME_ORDER_4: Tuple[str, ...] = (
     "Crisis",
     "Inflation",
@@ -55,6 +68,65 @@ REGIME_ORDER_5: Tuple[str, ...] = (
     "Walking on Ice",
     "Bull Market",
 )
+
+# 3-regime templates — coarser economic taxonomy derived from K=4/K=5.
+# Defensive collapses Crisis + Walking on Ice; Growth collapses
+# Steady State + Bull Market. When the source regimes disagree, use 0.
+#
+# Defensive is intentionally selective: style/vol factors do not contribute,
+# so the label is harder to earn outside acute stress episodes.
+TEMPLATE_MEAN_3: Dict[str, Dict[str, int]] = {
+    "SPXT": {"Defensive": 0, "Inflation": -1, "Growth": 1},
+    "VIX": {"Defensive": 1, "Inflation": 1, "Growth": -1},
+    "LUACOAS": {"Defensive": 0, "Inflation": 0, "Growth": -1},
+    "MXEF": {"Defensive": 0, "Inflation": 0, "Growth": 1},
+    "BCOMTR": {"Defensive": 0, "Inflation": 1, "Growth": 0},
+    "LUATTRUU": {"Defensive": 0, "Inflation": -1, "Growth": 0},
+    "USGG3M": {"Defensive": 0, "Inflation": 1, "Growth": 0},
+    "DXY": {"Defensive": 0, "Inflation": -1, "Growth": 0},
+    "LF98TRUU": {"Defensive": 0, "Inflation": 0, "Growth": 1},
+    "M1WOMOM": {"Defensive": 0, "Inflation": 0, "Growth": 1},
+    "M1WO000V": {"Defensive": 0, "Inflation": 1, "Growth": 0},
+    "DBFXCARU": {"Defensive": 0, "Inflation": 1, "Growth": 0},
+    "BCIT1T": {"Defensive": 0, "Inflation": 1, "Growth": 1},
+    "NEIXCTAT": {"Defensive": 0, "Inflation": 0, "Growth": 0},
+    "M1WOMVOL": {"Defensive": 0, "Inflation": 0, "Growth": 0},
+    "M1WOSC": {"Defensive": 0, "Inflation": 0, "Growth": 1},
+    "M1WOQU": {"Defensive": 0, "Inflation": 0, "Growth": 0},
+}
+
+TEMPLATE_VOL_3: Dict[str, Dict[str, int]] = {
+    "SPXT": {"Defensive": 1, "Inflation": 0, "Growth": -1},
+    "VIX": {"Defensive": 1, "Inflation": 0, "Growth": -1},
+    "LUACOAS": {"Defensive": 1, "Inflation": 0, "Growth": -1},
+    "MXEF": {"Defensive": 1, "Inflation": 0, "Growth": -1},
+    "BCOMTR": {"Defensive": 1, "Inflation": 1, "Growth": 0},
+    "LUATTRUU": {"Defensive": 1, "Inflation": 1, "Growth": -1},
+    "USGG3M": {"Defensive": 1, "Inflation": 1, "Growth": 0},
+    "DXY": {"Defensive": 1, "Inflation": 1, "Growth": 0},
+    "LF98TRUU": {"Defensive": 1, "Inflation": 0, "Growth": -1},
+    "M1WOMOM": {"Defensive": 0, "Inflation": 0, "Growth": -1},
+    "M1WO000V": {"Defensive": 0, "Inflation": 0, "Growth": -1},
+    "DBFXCARU": {"Defensive": 0, "Inflation": 0, "Growth": 0},
+    "BCIT1T": {"Defensive": 1, "Inflation": 1, "Growth": 0},
+    "NEIXCTAT": {"Defensive": 0, "Inflation": 0, "Growth": 0},
+    "M1WOMVOL": {"Defensive": 0, "Inflation": 0, "Growth": -1},
+    "M1WOSC": {"Defensive": 0, "Inflation": 0, "Growth": -1},
+    "M1WOQU": {"Defensive": 0, "Inflation": 0, "Growth": -1},
+}
+
+BOOSTS_3: Dict[str, Dict[str, float]] = {
+    "Defensive": {"VIX": 1.35, "LUACOAS": 1.25, "M1WOMVOL": 1.20, "M1WOQU": 1.15},
+    "Inflation": {"BCOMTR": 1.30, "USGG3M": 1.25, "LUATTRUU": 1.25},
+    "Growth": {
+        "SPXT": 1.30,
+        "VIX": 1.20,
+        "LUACOAS": 1.15,
+        "LF98TRUU": 1.15,
+        "M1WOMOM": 1.25,
+        "MXEF": 1.20,
+    },
+}
 
 # 4-regime templates — old/04_Bloomberg_v3 (explicit; not sliced from 5-reg)
 TEMPLATE_MEAN_4: Dict[str, Dict[str, int]] = {
@@ -165,7 +237,38 @@ ANCHOR_WINDOWS_5: List[Tuple] = [
     ("Post-GFC expansion", "2012-01", "2019-12", "Steady State", 0.35),
 ]
 
+ANCHOR_WINDOWS_3: List[Tuple] = [
+    ("Oil Crisis / Stagflation", "1973-01", "1974-12", "Inflation", 0.40),
+    ("Volcker era", "1979-01", "1982-12", "Inflation", 0.40),
+    ("Black Monday", "1987-09", "1987-12", "Defensive", 0.25),
+    ("GFC", "2007-07", "2009-03", "Defensive", 0.30),
+    ("COVID crash", "2020-02", "2020-04", "Defensive", 0.33),
+    ("Dot-com / late 90s", "1995-01", "1999-12", "Growth", 0.30),
+    ("Post-GFC expansion", "2012-01", "2019-12", "Growth", 0.35),
+]
+
 REGIME_COLORS: Dict[int, str] = {
+    0: "purple",
+    1: "red",
+    2: "lightblue",
+    3: "yellow",
+    4: "darkgreen",
+}
+
+REGIME_COLORS_3: Dict[int, str] = {
+    0: "purple",
+    1: "red",
+    2: "darkgreen",
+}
+
+REGIME_COLORS_4: Dict[int, str] = {
+    0: "purple",
+    1: "red",
+    2: "lightblue",
+    3: "yellow",
+}
+
+REGIME_COLORS_5: Dict[int, str] = {
     0: "purple",
     1: "red",
     2: "lightblue",
@@ -183,9 +286,21 @@ class RegimeSpec:
     template_vol: Dict[str, Dict[str, int]]
     boosts: Dict[str, Dict[str, float]]
     anchor_windows: List[Tuple]
+    colors: Dict[int, str]
 
 
 def get_spec(k: int) -> RegimeSpec:
+    if k == 3:
+        return RegimeSpec(
+            k=3,
+            names=REGIME_NAMES_3,
+            order=REGIME_ORDER_3,
+            template_mean=TEMPLATE_MEAN_3,
+            template_vol=TEMPLATE_VOL_3,
+            boosts=BOOSTS_3,
+            anchor_windows=ANCHOR_WINDOWS_3,
+            colors=REGIME_COLORS_3,
+        )
     if k == 4:
         return RegimeSpec(
             k=4,
@@ -195,6 +310,7 @@ def get_spec(k: int) -> RegimeSpec:
             template_vol=TEMPLATE_VOL_4,
             boosts=BOOSTS_4,
             anchor_windows=ANCHOR_WINDOWS_4,
+            colors=REGIME_COLORS_4,
         )
     if k == 5:
         return RegimeSpec(
@@ -205,8 +321,9 @@ def get_spec(k: int) -> RegimeSpec:
             template_vol=TEMPLATE_VOL_5,
             boosts=BOOSTS_5,
             anchor_windows=ANCHOR_WINDOWS_5,
+            colors=REGIME_COLORS_5,
         )
-    raise ValueError(f"Only K=4 or K=5 supported; got K={k}")
+    raise ValueError(f"Only K=3, K=4, or K=5 supported; got K={k}")
 
 
 def regime_names(k: int) -> Dict[int, str]:

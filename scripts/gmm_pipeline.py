@@ -23,6 +23,13 @@ from scripts.regime_labeling import (
 
 def _gmm_config(k: int) -> dict:
     """GMM fit settings (old/04_Bloomberg_v3 + old/05_GMM_5reg)."""
+    if k == 3:
+        return dict(
+            covariance_type="full",
+            n_init=20,
+            max_iter=500,
+            reg_covar=1e-5,
+        )
     if k == 4:
         return dict(
             covariance_type="full",
@@ -37,7 +44,7 @@ def _gmm_config(k: int) -> dict:
             max_iter=500,
             reg_covar=1e-6,
         )
-    raise ValueError(f"K must be 4 or 5; got {k}")
+    raise ValueError(f"K must be 3, 4, or 5; got {k}")
 
 
 def _wf_smoothing_config(k: int) -> Tuple[int, float]:
@@ -46,9 +53,11 @@ def _wf_smoothing_config(k: int) -> Tuple[int, float]:
 
     No long spans (12–18). K=5 needs slightly more blend than K=4 (5-way noise).
     """
-    if k == 4:
+    if k in {3, 4}:
         return 3, 0.60
-    return 7, 0.42
+    if k == 5:
+        return 7, 0.42
+    raise ValueError(f"K must be 3, 4, or 5; got {k}")
 
 
 CRISIS_REGIME_ID = 0
@@ -56,11 +65,13 @@ CRISIS_REGIME_ID = 0
 
 def _calm_regime_ids(k: int) -> frozenset[int]:
     """Non-crisis regimes that require confirmation before entry."""
+    if k == 3:
+        return frozenset({1, 2})
     if k == 4:
         return frozenset({1, 2, 3})
     if k == 5:
         return frozenset({1, 2, 3, 4})
-    raise ValueError(f"K must be 4 or 5; got {k}")
+    raise ValueError(f"K must be 3, 4, or 5; got {k}")
 
 
 def _candidate_streak(candidates: np.ndarray, t: int, regime_id: int) -> int:
@@ -197,6 +208,7 @@ def fit_static_gmm(
   Fit in-sample GMM, label with template Hungarian, return hard labels.
 
   For K=5 applies 3-month centered mode smoothing on labels (old/05_GMM_5reg).
+  K=3 and K=4 stay unsmoothed by default.
     """
     if smooth_labels is None:
         smooth_labels = k == 5
@@ -250,9 +262,9 @@ def run_walk_forward(
     Expanding-window GMM from ``test_start`` with:
     - expanding StandardScaler (not EWZ)
     - temporal Hungarian in raw space every month
-    - K=4: monthly economic relabeling, no dwell/island cleanup
+    - K=3/K=4: monthly economic relabeling, no dwell/island cleanup
     - K=5: January economic relabeling, asymmetric dwell, island cleanup
-    - Layer 1: moderate EMA (K=4: span 3 / 60% raw; K=5: span 7 / 42% raw)
+    - Layer 1: moderate EMA (K=3/K=4: span 3 / 60% raw; K=5: span 7 / 42% raw)
     """
     dates = features.index
     n_obs = len(dates)
@@ -263,7 +275,7 @@ def run_walk_forward(
     cfg = _gmm_config(k)
     ema_span, prob_raw_weight = _wf_smoothing_config(k)
     if map_clusters_monthly is None:
-        map_clusters_monthly = k == 4
+        map_clusters_monthly = k in {3, 4}
     if use_dwell_hysteresis is None:
         use_dwell_hysteresis = k == 5
     if use_island_suppression is None:

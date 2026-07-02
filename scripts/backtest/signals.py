@@ -57,7 +57,18 @@ def load_walk_forward_signals(
 
 
 def regime_index_sets(k: int) -> Dict[str, list[int]]:
-    """Canonical regime ids for K=4 and K=5 (Botte & Bao naming)."""
+    """Canonical regime ids grouped for strategy rules."""
+    if k == 3:
+        return {
+            "crisis": [0],  # Defensive
+            "inflation": [1],
+            "steady": [],
+            "woi": [],
+            "bull": [2],  # Growth
+            "risk_on": [2],
+            "risk_off": [0],
+        }
+
     base = {
         "crisis": [0],
         "inflation": [1],
