@@ -169,32 +169,37 @@ def suppress_island_flickers(
     crisis_keep_prob: float = 0.28,
 ) -> np.ndarray:
     """
-    Layer 3: drop 1–2 month regime islands sandwiched by the same neighbour.
-
-    Preserves short crisis runs when blended crisis probability is elevated
-    (e.g. COVID). Removes barcode stripes in calm bull markets.
+    Layer 3 (optional): drop 1–2 month regime islands sandwiched by the same
+    neighbour. Not applied in the default walk-forward path (``use_island_suppression``
+    defaults to False) because confirming a sandwich requires a future month and
+    retroactively revises labels.
     """
-    labels = np.asarray(labels, dtype=int).copy()
+    original = np.asarray(labels, dtype=int)
     crisis_probs = np.asarray(crisis_probs, dtype=float)
-    n = len(labels)
-    i = 0
-    while i < n:
-        j = i
-        while j < n and labels[j] == labels[i]:
-            j += 1
-        run_len = j - i
-        if run_len <= max_island_len and i > 0 and j < n:
-            left = int(labels[i - 1])
-            right = int(labels[j])
-            reg = int(labels[i])
-            if left == right and reg != left:
-                if reg == CRISIS_REGIME_ID:
-                    if float(crisis_probs[i:j].max()) >= crisis_keep_prob:
-                        i = j
-                        continue
-                labels[i:j] = left
-        i = j
-    return labels
+    n = len(original)
+    if n == 0:
+        return original.copy()
+    if len(crisis_probs) != n:
+        raise ValueError("labels and crisis_probs must have equal length")
+
+    out = original.copy()
+    for t in range(1, n):
+        for island_len in range(1, max_island_len + 1):
+            start = t - island_len
+            if start < 1:
+                continue
+            island_reg = int(original[start])
+            if np.any(original[start:t] != island_reg):
+                continue
+            left = int(out[start - 1])
+            right = int(original[t])
+            if left != right or island_reg == left:
+                continue
+            if island_reg == CRISIS_REGIME_ID:
+                if float(crisis_probs[start:t].max()) >= crisis_keep_prob:
+                    continue
+            out[start:t] = left
+    return out
 
 
 def fit_static_gmm(
@@ -205,10 +210,11 @@ def fit_static_gmm(
     smooth_labels: Optional[bool] = None,
 ) -> Tuple[GaussianMixture, StandardScaler, np.ndarray, dict[int, int]]:
     """
-  Fit in-sample GMM, label with template Hungarian, return hard labels.
+    Fit in-sample GMM, label with template Hungarian, return hard labels.
 
-  For K=5 applies 3-month centered mode smoothing on labels (old/05_GMM_5reg).
-  K=3 and K=4 stay unsmoothed by default.
+    For K=5 applies trailing 3-month mode smoothing on labels (causal window;
+    ``center=False`` — no future months in the rolling window). K=3 and K=4 stay
+    unsmoothed by default.
     """
     if smooth_labels is None:
         smooth_labels = k == 5
@@ -231,11 +237,10 @@ def fit_static_gmm(
     if smooth_labels:
         s = pd.Series(labels, index=features.index)
         labels = (
-            s.rolling(window=3, center=True)
+            s.rolling(window=3, center=False, min_periods=1)
             .apply(lambda x: pd.Series(x).mode().iloc[0])
-            .ffill()
-            .bfill()
-            .values.astype(int)
+            .astype(int)
+            .values
         )
 
     return gmm, scaler, labels, mapping
@@ -263,8 +268,13 @@ def run_walk_forward(
     - expanding StandardScaler (not EWZ)
     - temporal Hungarian in raw space every month
     - K=3/K=4: monthly economic relabeling, no dwell/island cleanup
-    - K=5: January economic relabeling, asymmetric dwell, island cleanup
+    - K=5: January economic relabeling, asymmetric dwell (no island suppression
+      by default — see ``use_island_suppression``)
     - Layer 1: moderate EMA (K=3/K=4: span 3 / 60% raw; K=5: span 7 / 42% raw)
+
+    Island suppression is off by default for all ``k`` so ``Regime`` has no
+    retroactive relabeling or confirmation lag. Pass ``use_island_suppression=True``
+    only for non-trading display experiments.
     """
     dates = features.index
     n_obs = len(dates)
@@ -279,7 +289,7 @@ def run_walk_forward(
     if use_dwell_hysteresis is None:
         use_dwell_hysteresis = k == 5
     if use_island_suppression is None:
-        use_island_suppression = k == 5
+        use_island_suppression = False
 
     gmm = GaussianMixture(
         n_components=k,

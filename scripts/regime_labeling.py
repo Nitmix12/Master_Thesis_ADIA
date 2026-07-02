@@ -8,7 +8,7 @@ Two Hungarian steps (same design as old/04_Bloomberg_v3):
 Templates are taken from the *old* pipeline that produced good plots, not v1's
 derived/softened templates.
 
-K=3: Defensive, Inflation, Growth
+K=3: Bear, Neutral, Bull (literature-style 3-state equity taxonomy)
 K=4: Crisis, Inflation, Steady State, Walking on Ice (Bloomberg v3)
 K=5: adds Bull Market (old/05_GMM_5reg) — separates low-vol equity rallies from Steady State
 """
@@ -28,9 +28,9 @@ from scipy.optimize import linear_sum_assignment
 # ---------------------------------------------------------------------------
 
 REGIME_NAMES_3: Dict[int, str] = {
-    0: "Defensive",
-    1: "Inflation",
-    2: "Growth",
+    0: "Bear",
+    1: "Neutral",
+    2: "Bull",
 }
 
 REGIME_NAMES_4: Dict[int, str] = {
@@ -49,9 +49,9 @@ REGIME_NAMES_5: Dict[int, str] = {
 }
 
 REGIME_ORDER_3: Tuple[str, ...] = (
-    "Defensive",
-    "Inflation",
-    "Growth",
+    "Bear",
+    "Neutral",
+    "Bull",
 )
 
 REGIME_ORDER_4: Tuple[str, ...] = (
@@ -69,56 +69,53 @@ REGIME_ORDER_5: Tuple[str, ...] = (
     "Bull Market",
 )
 
-# 3-regime templates — coarser economic taxonomy derived from K=4/K=5.
-# Defensive collapses Crisis + Walking on Ice; Growth collapses
-# Steady State + Bull Market. When the source regimes disagree, use 0.
-#
-# Defensive is intentionally selective: style/vol factors do not contribute,
-# so the label is harder to earn outside acute stress episodes.
+# 3-regime templates — Bear / Neutral / Bull (equity-style literature taxonomy).
+# Bear ≈ Crisis risk-off; Bull ≈ Steady State + rallies; Neutral ≈ sidewalk / mixed.
+# Neutral uses mostly zero signs so it absorbs ambiguous middle states.
 TEMPLATE_MEAN_3: Dict[str, Dict[str, int]] = {
-    "SPXT": {"Defensive": 0, "Inflation": -1, "Growth": 1},
-    "VIX": {"Defensive": 1, "Inflation": 1, "Growth": -1},
-    "LUACOAS": {"Defensive": 0, "Inflation": 0, "Growth": -1},
-    "MXEF": {"Defensive": 0, "Inflation": 0, "Growth": 1},
-    "BCOMTR": {"Defensive": 0, "Inflation": 1, "Growth": 0},
-    "LUATTRUU": {"Defensive": 0, "Inflation": -1, "Growth": 0},
-    "USGG3M": {"Defensive": 0, "Inflation": 1, "Growth": 0},
-    "DXY": {"Defensive": 0, "Inflation": -1, "Growth": 0},
-    "LF98TRUU": {"Defensive": 0, "Inflation": 0, "Growth": 1},
-    "M1WOMOM": {"Defensive": 0, "Inflation": 0, "Growth": 1},
-    "M1WO000V": {"Defensive": 0, "Inflation": 1, "Growth": 0},
-    "DBFXCARU": {"Defensive": 0, "Inflation": 1, "Growth": 0},
-    "BCIT1T": {"Defensive": 0, "Inflation": 1, "Growth": 1},
-    "NEIXCTAT": {"Defensive": 0, "Inflation": 0, "Growth": 0},
-    "M1WOMVOL": {"Defensive": 0, "Inflation": 0, "Growth": 0},
-    "M1WOSC": {"Defensive": 0, "Inflation": 0, "Growth": 1},
-    "M1WOQU": {"Defensive": 0, "Inflation": 0, "Growth": 0},
+    "SPXT": {"Bear": -1, "Neutral": 0, "Bull": 1},
+    "VIX": {"Bear": 1, "Neutral": 0, "Bull": -1},
+    "LUACOAS": {"Bear": 1, "Neutral": 0, "Bull": -1},
+    "MXEF": {"Bear": -1, "Neutral": 0, "Bull": 1},
+    "BCOMTR": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "LUATTRUU": {"Bear": 1, "Neutral": 0, "Bull": 0},
+    "USGG3M": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "DXY": {"Bear": 1, "Neutral": 0, "Bull": 0},
+    "LF98TRUU": {"Bear": -1, "Neutral": 0, "Bull": 1},
+    "M1WOMOM": {"Bear": -1, "Neutral": 0, "Bull": 1},
+    "M1WO000V": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "DBFXCARU": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "BCIT1T": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "NEIXCTAT": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "M1WOMVOL": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "M1WOSC": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "M1WOQU": {"Bear": 0, "Neutral": 0, "Bull": 0},
 }
 
 TEMPLATE_VOL_3: Dict[str, Dict[str, int]] = {
-    "SPXT": {"Defensive": 1, "Inflation": 0, "Growth": -1},
-    "VIX": {"Defensive": 1, "Inflation": 0, "Growth": -1},
-    "LUACOAS": {"Defensive": 1, "Inflation": 0, "Growth": -1},
-    "MXEF": {"Defensive": 1, "Inflation": 0, "Growth": -1},
-    "BCOMTR": {"Defensive": 1, "Inflation": 1, "Growth": 0},
-    "LUATTRUU": {"Defensive": 1, "Inflation": 1, "Growth": -1},
-    "USGG3M": {"Defensive": 1, "Inflation": 1, "Growth": 0},
-    "DXY": {"Defensive": 1, "Inflation": 1, "Growth": 0},
-    "LF98TRUU": {"Defensive": 1, "Inflation": 0, "Growth": -1},
-    "M1WOMOM": {"Defensive": 0, "Inflation": 0, "Growth": -1},
-    "M1WO000V": {"Defensive": 0, "Inflation": 0, "Growth": -1},
-    "DBFXCARU": {"Defensive": 0, "Inflation": 0, "Growth": 0},
-    "BCIT1T": {"Defensive": 1, "Inflation": 1, "Growth": 0},
-    "NEIXCTAT": {"Defensive": 0, "Inflation": 0, "Growth": 0},
-    "M1WOMVOL": {"Defensive": 0, "Inflation": 0, "Growth": -1},
-    "M1WOSC": {"Defensive": 0, "Inflation": 0, "Growth": -1},
-    "M1WOQU": {"Defensive": 0, "Inflation": 0, "Growth": -1},
+    "SPXT": {"Bear": 1, "Neutral": 0, "Bull": -1},
+    "VIX": {"Bear": 1, "Neutral": 0, "Bull": -1},
+    "LUACOAS": {"Bear": 1, "Neutral": 0, "Bull": -1},
+    "MXEF": {"Bear": 1, "Neutral": 0, "Bull": -1},
+    "BCOMTR": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "LUATTRUU": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "USGG3M": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "DXY": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "LF98TRUU": {"Bear": 1, "Neutral": 0, "Bull": -1},
+    "M1WOMOM": {"Bear": 0, "Neutral": 0, "Bull": -1},
+    "M1WO000V": {"Bear": 0, "Neutral": 0, "Bull": -1},
+    "DBFXCARU": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "BCIT1T": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "NEIXCTAT": {"Bear": 0, "Neutral": 0, "Bull": 0},
+    "M1WOMVOL": {"Bear": 1, "Neutral": 1, "Bull": -1},
+    "M1WOSC": {"Bear": 0, "Neutral": 0, "Bull": -1},
+    "M1WOQU": {"Bear": 0, "Neutral": 0, "Bull": 0},
 }
 
 BOOSTS_3: Dict[str, Dict[str, float]] = {
-    "Defensive": {"VIX": 1.35, "LUACOAS": 1.25, "M1WOMVOL": 1.20, "M1WOQU": 1.15},
-    "Inflation": {"BCOMTR": 1.30, "USGG3M": 1.25, "LUATTRUU": 1.25},
-    "Growth": {
+    "Bear": {"SPXT": 1.40, "VIX": 1.35, "LUACOAS": 1.30, "LF98TRUU": 1.15},
+    "Neutral": {},
+    "Bull": {
         "SPXT": 1.30,
         "VIX": 1.20,
         "LUACOAS": 1.15,
@@ -238,13 +235,13 @@ ANCHOR_WINDOWS_5: List[Tuple] = [
 ]
 
 ANCHOR_WINDOWS_3: List[Tuple] = [
-    ("Oil Crisis / Stagflation", "1973-01", "1974-12", "Inflation", 0.40),
-    ("Volcker era", "1979-01", "1982-12", "Inflation", 0.40),
-    ("Black Monday", "1987-09", "1987-12", "Defensive", 0.25),
-    ("GFC", "2007-07", "2009-03", "Defensive", 0.30),
-    ("COVID crash", "2020-02", "2020-04", "Defensive", 0.33),
-    ("Dot-com / late 90s", "1995-01", "1999-12", "Growth", 0.30),
-    ("Post-GFC expansion", "2012-01", "2019-12", "Growth", 0.35),
+    ("Oil Crisis / Stagflation", "1973-01", "1974-12", "Bear", 0.35),
+    ("Volcker era", "1979-01", "1982-12", "Bear", 0.35),
+    ("Black Monday", "1987-09", "1987-12", "Bear", 0.25),
+    ("GFC", "2007-07", "2009-03", "Bear", 0.30),
+    ("COVID crash", "2020-02", "2020-04", "Bear", 0.33),
+    ("Dot-com / late 90s", "1995-01", "1999-12", "Bull", 0.30),
+    ("Post-GFC expansion", "2012-01", "2019-12", "Bull", 0.35),
 ]
 
 REGIME_COLORS: Dict[int, str] = {
@@ -257,7 +254,7 @@ REGIME_COLORS: Dict[int, str] = {
 
 REGIME_COLORS_3: Dict[int, str] = {
     0: "purple",
-    1: "red",
+    1: "yellow",
     2: "darkgreen",
 }
 

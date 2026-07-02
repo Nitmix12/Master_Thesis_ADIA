@@ -16,9 +16,9 @@ StrategyKind = Literal["single", "two", "three"]
 
 # Equity exposure scaling for inverse-vol heuristic (regime-based vol targeting).
 INVERSE_VOL_SCALES: dict[int, float] = {
-    0: 0.25,  # Crisis / Defensive
-    1: 0.75,  # Inflation
-    2: 1.00,  # Steady State / Growth
+    0: 0.25,  # Crisis / Bear
+    1: 0.75,  # Inflation / Neutral
+    2: 1.00,  # Steady State / Bull
     3: 0.50,  # Walking on Ice
     4: 1.00,  # Bull Market
 }
@@ -114,6 +114,7 @@ def all_weather_weights(
 ) -> StrategyWeights:
     """
     Growth-like regimes -> equity; defensive regimes -> treasuries; inflation -> commodities.
+    K=3: Bull + Neutral -> equity; Bear -> treasuries (no inflation sleeve).
     """
     idx = signal.index
     sets = regime_index_sets(signal.k)
@@ -148,7 +149,7 @@ def inverse_vol_weights(
     """Regime-scaled equity exposure (inverse-vol style heuristic)."""
     if scales is None:
         scales = (
-            {0: 0.25, 1: 0.75, 2: 1.00}
+            {0: 0.25, 1: 0.50, 2: 1.00}
             if signal.k == 3
             else INVERSE_VOL_SCALES
         )
@@ -174,15 +175,15 @@ def defensive_safe_haven_weights(
 ) -> StrategyWeights:
     """
     Two-asset defensive rotation:
-    - Crisis/WOI/Defensive: 0% equity
-    - Inflation: partial equity
-    - Steady/Bull/Growth: higher equity
+    - Crisis/WOI/Bear: 0% equity
+    - Inflation/Neutral: partial equity
+    - Steady/Bull: higher equity
     """
     idx = signal.index
     r = signal.regime_id
     # Lower equity in inflation than pure risk-on allocation.
     scales: dict[int, float] = (
-        {0: 0.00, 1: 0.35, 2: 1.00}
+        {0: 0.00, 1: 0.50, 2: 1.00}
         if signal.k == 3
         else {0: 0.00, 1: 0.35, 2: 0.75, 3: 0.00, 4: 1.00}
     )

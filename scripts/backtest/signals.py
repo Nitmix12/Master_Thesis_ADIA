@@ -60,11 +60,11 @@ def regime_index_sets(k: int) -> Dict[str, list[int]]:
     """Canonical regime ids grouped for strategy rules."""
     if k == 3:
         return {
-            "crisis": [0],  # Defensive
-            "inflation": [1],
-            "steady": [],
-            "woi": [],
-            "bull": [2],  # Growth
+            "crisis": [0],  # Bear
+            "inflation": [],
+            "steady": [1],  # Neutral
+            "woi": [1],
+            "bull": [2],
             "risk_on": [2],
             "risk_off": [0],
         }
