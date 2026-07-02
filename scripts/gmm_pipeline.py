@@ -51,12 +51,13 @@ def _wf_smoothing_config(k: int) -> Tuple[int, float]:
     """
     Layer 1: moderate EMA — responsive but trims 1-month probability spikes.
 
-    No long spans (12–18). K=5 needs slightly more blend than K=4 (5-way noise).
+    No long spans (12–18). K=5 uses a longer span and lower raw weight than K=4
+    to limit five-way label flicker (island suppression is off on the trading path).
     """
     if k in {3, 4}:
         return 3, 0.60
     if k == 5:
-        return 7, 0.42
+        return 9, 0.33
     raise ValueError(f"K must be 3, 4, or 5; got {k}")
 
 
@@ -270,7 +271,7 @@ def run_walk_forward(
     - K=3/K=4: monthly economic relabeling, no dwell/island cleanup
     - K=5: January economic relabeling, asymmetric dwell (no island suppression
       by default — see ``use_island_suppression``)
-    - Layer 1: moderate EMA (K=3/K=4: span 3 / 60% raw; K=5: span 7 / 42% raw)
+    - Layer 1: moderate EMA (K=3/K=4: span 3 / 60% raw; K=5: span 9 / 33% raw)
 
     Island suppression is off by default for all ``k`` so ``Regime`` has no
     retroactive relabeling or confirmation lag. Pass ``use_island_suppression=True``
