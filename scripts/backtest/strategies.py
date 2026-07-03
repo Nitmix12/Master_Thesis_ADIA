@@ -10,6 +10,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from scripts.backtest.loaders import EW_THREE_WEIGHT
 from scripts.backtest.signals import RegimeSignal, regime_index_sets
 
 StrategyKind = Literal["single", "two", "three"]
@@ -51,6 +52,21 @@ def _normalize_three(
     return w_eq, w_sh, w_cm
 
 
+# K=3 Bear / Neutral / Bull: partial equity in sidewalk (Neutral) state.
+K3_EQUITY_SCORE_HARD: dict[int, float] = {0: 0.00, 1: 0.50, 2: 1.00}
+
+
+def _k3_equity_score(signal: RegimeSignal, *, soft: bool) -> pd.Series:
+    """Map K=3 regimes to [0, 1] equity tilt (Bear / half Neutral / full Bull)."""
+    idx = signal.index
+    sets = regime_index_sets(3)
+    if soft:
+        p_bull = _sum_probs(signal.probabilities, sets["bull"])
+        p_neutral = _sum_probs(signal.probabilities, sets["steady"])
+        return (p_bull + 0.5 * p_neutral).reindex(idx).fillna(0.0).clip(0.0, 1.0)
+    return signal.regime_id.map(K3_EQUITY_SCORE_HARD).astype(float).reindex(idx).fillna(0.0)
+
+
 def buy_and_hold(signal: RegimeSignal) -> StrategyWeights:
     """B0: 100% equity every month."""
     w = pd.Series(1.0, index=signal.index, name="equity")
@@ -58,14 +74,17 @@ def buy_and_hold(signal: RegimeSignal) -> StrategyWeights:
 
 
 def buy_and_hold_ew_three(signal: RegimeSignal) -> StrategyWeights:
-    """B1: 1/3 SPXT, 1/3 treasuries, 1/3 commodities every month."""
+    """B1: equal-weight buy & hold on the three investable sleeves (1/3 each).
+
+    SPXT (equity) + LUATTRUU (treasuries) + BCOMTR (commodities). Not EW17.
+    """
     idx = signal.index
-    third = 1.0 / 3.0
+    w = EW_THREE_WEIGHT
     return StrategyWeights(
         kind="three",
-        equity=pd.Series(third, index=idx),
-        safe_haven=pd.Series(third, index=idx),
-        commodity=pd.Series(third, index=idx),
+        equity=pd.Series(w, index=idx),
+        safe_haven=pd.Series(w, index=idx),
+        commodity=pd.Series(w, index=idx),
     )
 
 
@@ -76,8 +95,14 @@ def risk_on_off_weights(
 ) -> StrategyWeights:
     """
     Risk-on regimes -> 100% equity; risk-off regimes -> 0% equity (cash).
+
+    K=3: Bear 0%, Neutral 50%, Bull 100% (hard or probability blend).
     """
     idx = signal.index
+    if signal.k == 3:
+        w_eq = _k3_equity_score(signal, soft=soft)
+        return StrategyWeights(kind="single", equity=w_eq)
+
     sets = regime_index_sets(signal.k)
 
     if soft:
@@ -94,8 +119,15 @@ def safe_haven_weights(
     *,
     soft: bool = False,
 ) -> StrategyWeights:
-    """Risk-on -> 100% SPXT; risk-off -> 100% LUATTRUU (via equity weight only)."""
+    """Risk-on -> 100% SPXT; risk-off -> 100% LUATTRUU (via equity weight only).
+
+    K=3: same equity score as risk-on/off; remainder in treasuries.
+    """
     idx = signal.index
+    if signal.k == 3:
+        w_eq = _k3_equity_score(signal, soft=soft)
+        return StrategyWeights(kind="two", equity=w_eq)
+
     sets = regime_index_sets(signal.k)
 
     if soft:
@@ -114,7 +146,9 @@ def all_weather_weights(
 ) -> StrategyWeights:
     """
     Growth-like regimes -> equity; defensive regimes -> treasuries; inflation -> commodities.
-    K=3: Bull + Neutral -> equity; Bear -> treasuries (no inflation sleeve).
+
+    K=3: Bull + Neutral -> equity; Bear -> treasuries. No inflation sleeve (empty
+    ``inflation`` set); commodity weight stays 0 in hard mode.
     """
     idx = signal.index
     sets = regime_index_sets(signal.k)
@@ -235,12 +269,16 @@ def bond_floor_tactical_weights(
     """
     Two-asset tactical allocation with a permanent treasury floor.
     Equity is the risk-on signal but never exceeds 1 - bond_floor.
+
+    K=3: uses Bear / half-Neutral / Bull equity score (same as risk-on/off).
     """
     idx = signal.index
     sets = regime_index_sets(signal.k)
     max_eq = float(np.clip(1.0 - bond_floor, 0.0, 1.0))
 
-    if soft:
+    if signal.k == 3:
+        w_eq = _k3_equity_score(signal, soft=soft)
+    elif soft:
         w_eq = _sum_probs(signal.probabilities, sets["risk_on"]).clip(0.0, 1.0)
     else:
         w_eq = signal.regime_id.isin(sets["risk_on"]).astype(float)
@@ -257,6 +295,9 @@ def all_weather_defensive_weights(
     """
     Three-asset defensive all-weather:
     start from equal-risk-style floors, tilt by regime probabilities.
+
+    K=3: no inflation regime — commodity sleeve only receives the 20% floor
+    (tilt from ``inflation`` probs is zero); weights renormalize to eq/sh/cm.
     """
     idx = signal.index
     sets = regime_index_sets(signal.k)
@@ -295,9 +336,17 @@ def convex_soft_risk_on_weights(
     """
     Convex risk-on mapping for soft mode:
     equity = p(risk_on)^gamma, gamma>1 -> more defensive at middling confidence.
+
+    K=3 hard: same Bear / half-Neutral / Bull equity scores as risk-on/off.
+    K=3 soft: convex transform of the K=3 equity score.
     """
     idx = signal.index
     sets = regime_index_sets(signal.k)
+
+    if signal.k == 3:
+        score = _k3_equity_score(signal, soft=soft)
+        w_eq = score.pow(float(gamma)) if soft else score
+        return StrategyWeights(kind="single", equity=w_eq.reindex(idx).fillna(0.0).clip(0.0, 1.0))
 
     if soft:
         p_on = _sum_probs(signal.probabilities, sets["risk_on"]).clip(0.0, 1.0)
@@ -309,6 +358,16 @@ def convex_soft_risk_on_weights(
 
 
 BENCHMARK_STRATEGY_KEYS = frozenset({"buy_and_hold", "buy_and_hold_ew_three"})
+
+BENCHMARK_DISPLAY_NAMES: dict[str, str] = {
+    "buy_and_hold": "B0 — SPXT buy & hold",
+    "buy_and_hold_ew_three": "B1 — EW3 buy & hold (SPXT / LUATTRUU / BCOMTR)",
+}
+
+BENCHMARK_CURVE_LABELS: dict[str, str] = {
+    "buy_and_hold": "B0 — SPXT B&H",
+    "buy_and_hold_ew_three": "B1 — EW3 B&H",
+}
 
 STRATEGY_BUILDERS = {
     "buy_and_hold": lambda sig, soft=False: buy_and_hold(sig),

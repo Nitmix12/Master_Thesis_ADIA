@@ -1,4 +1,4 @@
-"""Align walk-forward regime signals to return dates (causal)."""
+"""Align walk-forward regime signals to return dates (lagged 1 month in backtest)."""
 
 from __future__ import annotations
 
@@ -57,7 +57,12 @@ def load_walk_forward_signals(
 
 
 def regime_index_sets(k: int) -> Dict[str, list[int]]:
-    """Canonical regime ids grouped for strategy rules."""
+    """Canonical regime ids grouped for strategy rules.
+
+    K=3 (Bear / Neutral / Bull): Bear = risk-off; Bull = risk-on; Neutral is used
+    via ``steady`` / ``woi`` for sleeve strategies and partial equity in K=3
+    binary rules (see ``_k3_equity_score`` in strategies.py).
+    """
     if k == 3:
         return {
             "crisis": [0],  # Bear

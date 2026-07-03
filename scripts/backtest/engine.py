@@ -328,24 +328,94 @@ def plot_strategy_report(
     return fig
 
 
+def _append_benchmark_curves(
+    results: dict[str, pd.DataFrame],
+    metrics_rows: list[pd.Series],
+    *,
+    returns_panel: pd.DataFrame,
+    signal: Any,
+    monthly_contribution: float,
+) -> None:
+    """Add B0 SPXT and B1 EW3 reference curves (regime-independent)."""
+    from scripts.backtest.strategies import BENCHMARK_CURVE_LABELS, STRATEGY_BUILDERS
+
+    for bench_key, bench_label in BENCHMARK_CURVE_LABELS.items():
+        if bench_label in results:
+            continue
+        w = STRATEGY_BUILDERS[bench_key](signal, soft=False)
+        bt = run_strategy_backtest(w, returns_panel)
+        results[bench_label] = bt
+        metrics_rows.append(
+            compute_metrics(bt, monthly_contribution=monthly_contribution, label=bench_label)
+        )
+
+
+def finalize_strategy_summary(summary: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Split benchmarks vs regime strategies and add display / vs-benchmark columns.
+
+    Returns (benchmarks, regime_strategies, full_table).
+    """
+    from scripts.backtest.strategies import BENCHMARK_DISPLAY_NAMES
+
+    full = summary.copy()
+    if "Strategy" in full.columns:
+        full["Display"] = full["Strategy"].map(
+            lambda s: BENCHMARK_DISPLAY_NAMES.get(str(s), str(s).replace("_", " "))
+        )
+        if "Mode" in full.columns:
+            regime_mask = full["Mode"] != "baseline"
+            full.loc[regime_mask, "Display"] = (
+                full.loc[regime_mask, "Run"].astype(str)
+                + " | "
+                + full.loc[regime_mask, "Strategy"].astype(str).str.replace("_", " ")
+                + " ("
+                + full.loc[regime_mask, "Mode"].astype(str)
+                + ")"
+            )
+
+    for col in ("Sharpe", "CAGR", "Max_Drawdown", "Final_Portfolio_USD"):
+        if col in full.columns:
+            full[col] = pd.to_numeric(full[col], errors="coerce")
+
+    benchmarks = full[full["Mode"] == "baseline"].copy() if "Mode" in full.columns else full.iloc[0:0]
+    regime = full[full["Mode"] != "baseline"].copy() if "Mode" in full.columns else full.copy()
+
+    if not benchmarks.empty and "Sharpe" in benchmarks.columns:
+        b0 = benchmarks.loc[benchmarks["Strategy"] == "buy_and_hold", "Sharpe"]
+        b1 = benchmarks.loc[benchmarks["Strategy"] == "buy_and_hold_ew_three", "Sharpe"]
+        if len(b0):
+            regime["Sharpe_minus_B0"] = regime["Sharpe"] - float(b0.iloc[0])
+        if len(b1):
+            regime["Sharpe_minus_B1"] = regime["Sharpe"] - float(b1.iloc[0])
+
+    return benchmarks, regime, full
+
+
 def run_strategy_comparison_cell(
     strategy_key: str,
     *,
     soft: bool | None = None,
     returns_panel: pd.DataFrame | None = None,
+    signals_k3: Any = None,
     signals_k4: Any = None,
     signals_k5: Any = None,
     monthly_contribution: float = DEFAULT_MONTHLY_CONTRIBUTION,
     title: str | None = None,
+    include_k3: bool = True,
 ) -> pd.DataFrame:
     """
-    Run one strategy for K=4 and K=5 (and buy-and-hold once), plot, return metrics table.
+    Run one strategy for K=3, K=4, and K=5 (benchmarks once), plot, return metrics.
+
+    Regime strategies also overlay B0 (SPXT) and B1 (EW3) benchmark curves.
     """
     from scripts.backtest.signals import load_walk_forward_signals
     from scripts.backtest.strategies import BENCHMARK_STRATEGY_KEYS, STRATEGY_BUILDERS
 
     if returns_panel is None:
         returns_panel = load_backtest_panel()
+    if signals_k3 is None:
+        signals_k3 = load_walk_forward_signals(3)
     if signals_k4 is None:
         signals_k4 = load_walk_forward_signals(4)
     if signals_k5 is None:
@@ -355,7 +425,7 @@ def run_strategy_comparison_cell(
     results: dict[str, pd.DataFrame] = {}
     metrics_rows: list[pd.Series] = []
 
-    def _run(k: int, sig: Any, tag: str) -> None:
+    def _run(sig: Any, tag: str) -> None:
         if strategy_key in BENCHMARK_STRATEGY_KEYS:
             w = builder(sig, soft=False)
         else:
@@ -365,10 +435,19 @@ def run_strategy_comparison_cell(
         metrics_rows.append(compute_metrics(bt, monthly_contribution=monthly_contribution, label=tag))
 
     if strategy_key in BENCHMARK_STRATEGY_KEYS:
-        _run(4, signals_k4, "K=4 / K=5 (same)")
+        _run(signals_k4, "K=3 / K=4 / K=5 (same)")
     else:
-        _run(4, signals_k4, f"K=4 {'soft' if soft else 'hard'}")
-        _run(5, signals_k5, f"K=5 {'soft' if soft else 'hard'}")
+        _append_benchmark_curves(
+            results,
+            metrics_rows,
+            returns_panel=returns_panel,
+            signal=signals_k4,
+            monthly_contribution=monthly_contribution,
+        )
+        if include_k3:
+            _run(signals_k3, f"K=3 {'soft' if soft else 'hard'}")
+        _run(signals_k4, f"K=4 {'soft' if soft else 'hard'}")
+        _run(signals_k5, f"K=5 {'soft' if soft else 'hard'}")
 
     metrics_df = pd.DataFrame(metrics_rows).set_index("Label")
     mode = "soft" if soft else "hard" if soft is not None else ""

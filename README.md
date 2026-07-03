@@ -44,4 +44,8 @@ python scripts/data_preparation.py
 # notebooks/backtest/01_strategy_comparison.ipynb
 ```
 
-Uses `walk_forward_k4.csv` / `walk_forward_k5.csv` with hard + soft regime rules (buy & hold, risk-on/off, safe haven, all-weather, inverse vol).
+Uses `walk_forward_k3.csv` / `walk_forward_k4.csv` / `walk_forward_k5.csv` with hard + soft regime rules.
+
+**Benchmarks:** B0 = 100% SPXT buy & hold; B1 = EW3 equal-weight on the three investable sleeves (1/3 SPXT, 1/3 LUATTRUU, 1/3 BCOMTR). Every regime-strategy figure overlays B0 and B1.
+
+**K=3** uses Bear / Neutral / Bull walk-forward labels (robustness vs K=4/K=5).

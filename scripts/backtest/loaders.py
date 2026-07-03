@@ -14,6 +14,10 @@ EQUITY_COL = "SPXT"
 SAFE_HAVEN_COL = "LUATTRUU"
 COMMODITY_COL = "BCOMTR"
 
+# Equal-weight three-asset benchmark (investable universe for regime strategies).
+EW_THREE_COLS: tuple[str, ...] = (EQUITY_COL, SAFE_HAVEN_COL, COMMODITY_COL)
+EW_THREE_WEIGHT: float = 1.0 / 3.0
+
 
 def load_backtest_panel(
     *,
@@ -24,6 +28,8 @@ def load_backtest_panel(
     Monthly asset returns for backtesting (aligned on ``features.csv`` index).
 
     Columns: SPXT (equity), LUATTRUU (treasuries), BCOMTR (commodities).
+    These three assets are the investable universe for regime portfolios and for
+    the EW3 benchmark (1/3 each), not an equal-weight across all 17 GMM factors.
     """
     features = load_features() if features_path is None else pd.read_csv(
         features_path, index_col=0, parse_dates=True
@@ -40,9 +46,9 @@ def load_walk_forward_predictions(
     *,
     outputs_dir: Path | None = None,
 ) -> pd.DataFrame:
-    """Load ``walk_forward_k4.csv`` or ``walk_forward_k5.csv``."""
-    if k not in (4, 5):
-        raise ValueError("k must be 4 or 5")
+    """Load ``walk_forward_k3.csv``, ``walk_forward_k4.csv``, or ``walk_forward_k5.csv``."""
+    if k not in (3, 4, 5):
+        raise ValueError("k must be 3, 4, or 5")
     out_dir = outputs_dir or OUTPUT_DIR
     path = out_dir / f"walk_forward_k{k}.csv"
     if not path.exists():
