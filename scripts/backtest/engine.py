@@ -117,6 +117,48 @@ def run_two_asset_backtest(
     )
 
 
+def run_eq_sh_cash_backtest(
+    equity_returns: pd.Series,
+    safe_haven_returns: pd.Series,
+    equity_target_weight: pd.Series,
+    safe_haven_target_weight: pd.Series,
+    cash_target_weight: pd.Series,
+    *,
+    transaction_cost_bps: float = DEFAULT_TRANSACTION_COST_BPS,
+) -> pd.DataFrame:
+    """Equity + treasuries + cash (0% return); weights sum to 1 before execution lag."""
+    eq = pd.to_numeric(equity_returns, errors="coerce").dropna().sort_index()
+    sh = pd.to_numeric(safe_haven_returns, errors="coerce").dropna().sort_index()
+    idx = eq.index.intersection(sh.index)
+    eq, sh = eq.reindex(idx), sh.reindex(idx)
+
+    w_eq = pd.to_numeric(equity_target_weight, errors="coerce").reindex(idx).ffill().fillna(0.0).clip(0.0, 1.0)
+    w_sh = pd.to_numeric(safe_haven_target_weight, errors="coerce").reindex(idx).ffill().fillna(0.0).clip(0.0, 1.0)
+    w_cash = pd.to_numeric(cash_target_weight, errors="coerce").reindex(idx).ffill().fillna(0.0).clip(0.0, 1.0)
+
+    target = pd.concat([w_eq, w_sh, w_cash], axis=1)
+    target.columns = ["eq", "sh", "cash"]
+    target = target.div(target.sum(axis=1).replace(0.0, np.nan), axis=0).fillna(0.0)
+    w_exec = target.shift(1).fillna(0.0)
+    gross_ret = (w_exec["eq"] * eq) + (w_exec["sh"] * sh) + (w_exec["cash"] * 0.0)
+    turnover = (w_exec - w_exec.shift(1)).abs().sum(axis=1).fillna(w_exec.abs().sum(axis=1))
+    cost = turnover * (transaction_cost_bps / 10_000.0)
+    net_ret = gross_ret - cost
+    nav_net = (1.0 + net_ret).cumprod()
+    drawdown = (nav_net / nav_net.cummax()) - 1.0
+    return pd.DataFrame(
+        {
+            "Net_Return": net_ret,
+            "NAV_Net": nav_net,
+            "Drawdown_Net": drawdown,
+            "Turnover": turnover,
+            "Exec_Weight_Equity": w_exec["eq"],
+            "Exec_Weight_Cash": w_exec["cash"],
+        },
+        index=idx,
+    )
+
+
 def run_three_asset_backtest(
     equity_returns: pd.Series,
     safe_haven_returns: pd.Series,
@@ -190,6 +232,17 @@ def run_strategy_backtest(
             weights.equity,
             weights.safe_haven,
             weights.commodity,
+            transaction_cost_bps=transaction_cost_bps,
+        )
+    if weights.kind == "eq_sh_cash":
+        if weights.equity is None or weights.safe_haven is None or weights.cash is None:
+            raise ValueError("eq_sh_cash strategy requires equity, safe_haven, cash weights")
+        return run_eq_sh_cash_backtest(
+            eq,
+            sh,
+            weights.equity,
+            weights.safe_haven,
+            weights.cash,
             transaction_cost_bps=transaction_cost_bps,
         )
     raise ValueError(f"Unknown strategy kind: {weights.kind}")

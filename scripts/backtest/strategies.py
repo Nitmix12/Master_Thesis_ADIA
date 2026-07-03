@@ -13,7 +13,7 @@ import pandas as pd
 from scripts.backtest.loaders import EW_THREE_WEIGHT
 from scripts.backtest.signals import RegimeSignal, regime_index_sets
 
-StrategyKind = Literal["single", "two", "three"]
+StrategyKind = Literal["single", "two", "three", "eq_sh_cash"]
 
 # Equity exposure scaling for inverse-vol heuristic (regime-based vol targeting).
 INVERSE_VOL_SCALES: dict[int, float] = {
@@ -31,6 +31,7 @@ class StrategyWeights:
     equity: pd.Series | None = None
     safe_haven: pd.Series | None = None
     commodity: pd.Series | None = None
+    cash: pd.Series | None = None
 
 
 def _sum_probs(probs: pd.DataFrame, regime_ids: list[int]) -> pd.Series:
@@ -327,6 +328,59 @@ def all_weather_defensive_weights(
     )
 
 
+def _bear_probability(signal: RegimeSignal, *, soft: bool) -> pd.Series:
+    """Probability mass on Bear / crisis (regime 0) for cash-shelter rules."""
+    idx = signal.index
+    sets = regime_index_sets(signal.k)
+    if soft:
+        return _sum_probs(signal.probabilities, sets["risk_off"]).reindex(idx).fillna(0.0).clip(0.0, 1.0)
+    return signal.regime_id.isin(sets["risk_off"]).astype(float).reindex(idx).fillna(0.0)
+
+
+def regime_cash_shelter_weights(
+    signal: RegimeSignal,
+    *,
+    soft: bool = False,
+    bond_floor: float = 0.30,
+    bear_cash_min: float = 0.80,
+) -> StrategyWeights:
+    """
+    Bond-floor tactical allocation with a fourth sleeve: cash (0% return).
+
+    Non-equity allocation splits between LUATTRUU and cash:
+    - Bear / high crisis probability: 80-100% of the defensive sleeve in cash
+    - Otherwise: defensive sleeve in treasuries
+
+    Equity uses the same bond-floor tactical rule as ``bond_floor_tactical``.
+    """
+    idx = signal.index
+    sets = regime_index_sets(signal.k)
+    max_eq = float(np.clip(1.0 - bond_floor, 0.0, 1.0))
+
+    if signal.k == 3:
+        w_eq = _k3_equity_score(signal, soft=soft)
+    elif soft:
+        w_eq = _sum_probs(signal.probabilities, sets["risk_on"]).clip(0.0, 1.0)
+    else:
+        w_eq = signal.regime_id.isin(sets["risk_on"]).astype(float)
+
+    w_eq = (max_eq * w_eq).reindex(idx).fillna(0.0).clip(0.0, 1.0)
+
+    p_bear = _bear_probability(signal, soft=soft)
+    # 0% cash in non-bear; 80-100% of defensive sleeve in cash as bear prob rises.
+    cash_frac = p_bear * (bear_cash_min + (1.0 - bear_cash_min) * p_bear)
+    defensive = 1.0 - w_eq
+    w_cash = (defensive * cash_frac).reindex(idx).fillna(0.0).clip(0.0, 1.0)
+    w_sh = (defensive - w_cash).reindex(idx).fillna(0.0).clip(0.0, 1.0)
+
+    return StrategyWeights(
+        kind="eq_sh_cash",
+        equity=w_eq,
+        safe_haven=w_sh,
+        cash=w_cash,
+    )
+
+
 def convex_soft_risk_on_weights(
     signal: RegimeSignal,
     *,
@@ -381,4 +435,5 @@ STRATEGY_BUILDERS = {
     "bond_floor_tactical": bond_floor_tactical_weights,
     "all_weather_defensive": all_weather_defensive_weights,
     "convex_soft_risk_on": convex_soft_risk_on_weights,
+    "regime_cash_shelter": regime_cash_shelter_weights,
 }
