@@ -172,7 +172,7 @@ def fit_static_gmm(
     """
     Fit in-sample GMM, label with template Hungarian, return hard labels.
 
-    For K=5 applies trailing 3-month mode smoothing on labels (causal window;
+    For K=5 applies trailing 3-month mode smoothing on labels (economically sensible window;
     ``center=False`` — no future months in the rolling window). K=3 and K=4 stay
     unsmoothed by default.
     """
@@ -230,7 +230,7 @@ def run_walk_forward(
     - K=5: January economic relabeling + asymmetric dwell hysteresis
     - Layer 1: moderate EMA (K=3/K=4: span 3 / 60% raw; K=5: span 9 / 33% raw)
 
-    All steps are causal: each month is fit on prior data only, EMA and dwell
+    All steps are economically sensible: each month is fit on prior data only, EMA and dwell
     rules use trailing information, and backtests apply an additional 1-month
     execution lag on portfolio weights.
 

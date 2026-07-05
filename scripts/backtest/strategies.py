@@ -411,6 +411,58 @@ def convex_soft_risk_on_weights(
     return StrategyWeights(kind="single", equity=w_eq.reindex(idx).fillna(0.0).clip(0.0, 1.0))
 
 
+DATA_DRIVEN_STRATEGY_K: dict[str, int] = {
+    "data_driven_3": 3,
+    "data_driven_4": 4,
+    "data_driven_5": 5,
+}
+
+
+def data_driven_portfolio_weights(
+    signal: RegimeSignal,
+    portfolios: dict[int, np.ndarray],
+) -> StrategyWeights:
+    """
+    Hard regime switch to frozen MV-optimal weights (training 1971–1990 only).
+
+  Each month uses the portfolio vector ``portfolios[regime_id]`` on
+    (SPXT, LUATTRUU, BCOMTR).
+    """
+    idx = signal.index
+    rid = signal.regime_id.reindex(idx).astype(int)
+
+    def _weight(regime_id: int, asset_idx: int) -> float:
+        vec = portfolios.get(int(regime_id))
+        if vec is None:
+            return EW_THREE_WEIGHT
+        return float(vec[asset_idx])
+
+    w_eq = rid.map(lambda r: _weight(r, 0)).astype(float)
+    w_sh = rid.map(lambda r: _weight(r, 1)).astype(float)
+    w_cm = rid.map(lambda r: _weight(r, 2)).astype(float)
+
+    return StrategyWeights(
+        kind="three",
+        equity=w_eq.reindex(idx).fillna(EW_THREE_WEIGHT),
+        safe_haven=w_sh.reindex(idx).fillna(EW_THREE_WEIGHT),
+        commodity=w_cm.reindex(idx).fillna(EW_THREE_WEIGHT),
+    )
+
+
+def _make_data_driven_builder(expected_k: int):
+    def builder(signal: RegimeSignal, *, soft: bool = False) -> StrategyWeights:
+        from scripts.portfolio_allocation import load_regime_portfolios
+
+        if signal.k != expected_k:
+            raise ValueError(
+                f"data_driven_{expected_k} requires K={expected_k} signals, got K={signal.k}"
+            )
+        portfolios = load_regime_portfolios(expected_k)
+        return data_driven_portfolio_weights(signal, portfolios)
+
+    return builder
+
+
 BENCHMARK_STRATEGY_KEYS = frozenset({"buy_and_hold", "buy_and_hold_ew_three"})
 
 BENCHMARK_DISPLAY_NAMES: dict[str, str] = {
@@ -436,4 +488,7 @@ STRATEGY_BUILDERS = {
     "all_weather_defensive": all_weather_defensive_weights,
     "convex_soft_risk_on": convex_soft_risk_on_weights,
     "regime_cash_shelter": regime_cash_shelter_weights,
+    "data_driven_3": _make_data_driven_builder(3),
+    "data_driven_4": _make_data_driven_builder(4),
+    "data_driven_5": _make_data_driven_builder(5),
 }

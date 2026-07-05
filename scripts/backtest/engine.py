@@ -463,7 +463,7 @@ def run_strategy_comparison_cell(
     Regime strategies also overlay B0 (SPXT) and B1 (EW3) benchmark curves.
     """
     from scripts.backtest.signals import load_walk_forward_signals
-    from scripts.backtest.strategies import BENCHMARK_STRATEGY_KEYS, STRATEGY_BUILDERS
+    from scripts.backtest.strategies import BENCHMARK_STRATEGY_KEYS, STRATEGY_BUILDERS, DATA_DRIVEN_STRATEGY_K
 
     if returns_panel is None:
         returns_panel = load_backtest_panel()
@@ -489,6 +489,17 @@ def run_strategy_comparison_cell(
 
     if strategy_key in BENCHMARK_STRATEGY_KEYS:
         _run(signals_k4, "K=3 / K=4 / K=5 (same)")
+    elif strategy_key in DATA_DRIVEN_STRATEGY_K:
+        k_dd = DATA_DRIVEN_STRATEGY_K[strategy_key]
+        sig_map = {3: signals_k3, 4: signals_k4, 5: signals_k5}
+        _append_benchmark_curves(
+            results,
+            metrics_rows,
+            returns_panel=returns_panel,
+            signal=sig_map[k_dd],
+            monthly_contribution=monthly_contribution,
+        )
+        _run(sig_map[k_dd], f"K={k_dd} hard")
     else:
         _append_benchmark_curves(
             results,
@@ -506,4 +517,60 @@ def run_strategy_comparison_cell(
     mode = "soft" if soft else "hard" if soft is not None else ""
     plot_title = title or f"{strategy_key.replace('_', ' ').title()} ({mode})".strip()
     plot_strategy_report(results, metrics_df, title=plot_title, monthly_contribution=monthly_contribution)
+    return metrics_df
+
+
+def run_data_driven_overview_cell(
+    *,
+    returns_panel: pd.DataFrame | None = None,
+    signals_k3: Any = None,
+    signals_k4: Any = None,
+    signals_k5: Any = None,
+    monthly_contribution: float = DEFAULT_MONTHLY_CONTRIBUTION,
+    title: str = "Data-driven strategies (K=3 / K=4 / K=5) vs benchmarks",
+) -> pd.DataFrame:
+    """
+    Single comparison plot: B0, B1, and data_driven_3/4/5 (each on matching K signals).
+    """
+    from scripts.backtest.signals import load_walk_forward_signals
+    from scripts.backtest.strategies import (
+        BENCHMARK_CURVE_LABELS,
+        DATA_DRIVEN_STRATEGY_K,
+        STRATEGY_BUILDERS,
+    )
+
+    if returns_panel is None:
+        returns_panel = load_backtest_panel()
+    if signals_k3 is None:
+        signals_k3 = load_walk_forward_signals(3)
+    if signals_k4 is None:
+        signals_k4 = load_walk_forward_signals(4)
+    if signals_k5 is None:
+        signals_k5 = load_walk_forward_signals(5)
+
+    sig_map = {3: signals_k3, 4: signals_k4, 5: signals_k5}
+    results: dict[str, pd.DataFrame] = {}
+    metrics_rows: list[pd.Series] = []
+
+    for bench_key, bench_label in BENCHMARK_CURVE_LABELS.items():
+        w = STRATEGY_BUILDERS[bench_key](signals_k4, soft=False)
+        bt = run_strategy_backtest(w, returns_panel)
+        results[bench_label] = bt
+        m = compute_metrics(bt, monthly_contribution=monthly_contribution, label=bench_label)
+        m["Strategy"] = bench_key
+        m["Mode"] = "baseline"
+        metrics_rows.append(m)
+
+    for strategy_key, k in DATA_DRIVEN_STRATEGY_K.items():
+        label = f"Data-driven K={k}"
+        w = STRATEGY_BUILDERS[strategy_key](sig_map[k], soft=False)
+        bt = run_strategy_backtest(w, returns_panel)
+        results[label] = bt
+        m = compute_metrics(bt, monthly_contribution=monthly_contribution, label=label)
+        m["Strategy"] = strategy_key
+        m["Mode"] = "hard"
+        metrics_rows.append(m)
+
+    metrics_df = pd.DataFrame(metrics_rows).set_index("Label")
+    plot_strategy_report(results, metrics_df, title=title, monthly_contribution=monthly_contribution)
     return metrics_df
