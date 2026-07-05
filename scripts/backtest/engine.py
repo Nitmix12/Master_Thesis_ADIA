@@ -543,8 +543,9 @@ def run_data_driven_overview_cell(
     )
 
     mode = "soft" if soft else "hard"
+    mode_label = "probability-weighted" if soft else "hard"
     if title is None:
-        title = f"Data-driven strategies (K=3 / K=4 / K=5, {mode}) vs benchmarks"
+        title = f"Data-driven ({mode_label}) — K=3 / K=4 / K=5 vs benchmarks"
 
     if returns_panel is None:
         returns_panel = load_backtest_panel()
@@ -569,7 +570,7 @@ def run_data_driven_overview_cell(
         metrics_rows.append(m)
 
     for strategy_key, k in DATA_DRIVEN_STRATEGY_K.items():
-        label = f"Data-driven K={k} ({mode})"
+        label = f"K={k} {mode_label}"
         w = STRATEGY_BUILDERS[strategy_key](sig_map[k], soft=soft)
         bt = run_strategy_backtest(w, returns_panel)
         results[label] = bt
