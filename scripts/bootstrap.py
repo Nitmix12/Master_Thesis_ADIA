@@ -68,7 +68,7 @@ def run_bayesian_bootstrap(
     n_iterations=1000,
     block_size=120,
     max_components=10,
-    threshold=0.04,
+    threshold=0.05,
     alpha=0.1,
     n_jobs=-1,
     master_seed: int = DEFAULT_BOOTSTRAP_SEED,

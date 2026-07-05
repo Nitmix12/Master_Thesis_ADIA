@@ -22,7 +22,7 @@ python scripts/data_preparation.py
 - **K=4:** `covariance_type="full"`, `n_init=20` (static and walk-forward)
 - **K=5:** `covariance_type="diag"`, `n_init=20` (static and walk-forward; matches old/05_GMM_5reg)
 - **K=5 static labels:** optional trailing 3-month mode smoothing (`center=False`; no future-month look-ahead in the rolling window)
-- **K=5 walk-forward:** dwell hysteresis + causal EMA (span 9, 33% raw / 67% EMA); island suppression **off** by default
+- **K=5 walk-forward:** dwell hysteresis + causal EMA (span 9, 33% raw / 67% EMA)
 
 ## Regime labeling
 

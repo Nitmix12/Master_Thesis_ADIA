@@ -52,7 +52,7 @@ def _wf_smoothing_config(k: int) -> Tuple[int, float]:
     Layer 1: moderate EMA — responsive but trims 1-month probability spikes.
 
     No long spans (12–18). K=5 uses a longer span and lower raw weight than K=4
-    to limit five-way label flicker (island suppression is off on the trading path).
+    to limit five-way label flicker.
     """
     if k in {3, 4}:
         return 3, 0.60
@@ -162,47 +162,6 @@ def apply_dwell_hysteresis(
     return out
 
 
-def suppress_island_flickers(
-    labels: np.ndarray,
-    crisis_probs: np.ndarray,
-    *,
-    max_island_len: int = 2,
-    crisis_keep_prob: float = 0.28,
-) -> np.ndarray:
-    """
-    Layer 3 (optional): drop 1–2 month regime islands sandwiched by the same
-    neighbour. Not applied in the default walk-forward path (``use_island_suppression``
-    defaults to False) because confirming a sandwich requires a future month and
-    retroactively revises labels.
-    """
-    original = np.asarray(labels, dtype=int)
-    crisis_probs = np.asarray(crisis_probs, dtype=float)
-    n = len(original)
-    if n == 0:
-        return original.copy()
-    if len(crisis_probs) != n:
-        raise ValueError("labels and crisis_probs must have equal length")
-
-    out = original.copy()
-    for t in range(1, n):
-        for island_len in range(1, max_island_len + 1):
-            start = t - island_len
-            if start < 1:
-                continue
-            island_reg = int(original[start])
-            if np.any(original[start:t] != island_reg):
-                continue
-            left = int(out[start - 1])
-            right = int(original[t])
-            if left != right or island_reg == left:
-                continue
-            if island_reg == CRISIS_REGIME_ID:
-                if float(crisis_probs[start:t].max()) >= crisis_keep_prob:
-                    continue
-            out[start:t] = left
-    return out
-
-
 def fit_static_gmm(
     features: pd.DataFrame,
     k: int,
@@ -254,28 +213,30 @@ def run_walk_forward(
     test_start: str = "1990-01-31",
     map_clusters_monthly: Optional[bool] = None,
     use_dwell_hysteresis: Optional[bool] = None,
-    use_island_suppression: Optional[bool] = None,
     calm_dwell_months: int = 2,
     crisis_enter_months: int = 1,
     crisis_exit_months: int = 1,
     crisis_enter_weak_months: int = 2,
     crisis_strong_prob: float = 0.32,
-    crisis_keep_prob: float = 0.28,
     random_state: int = 42,
     show_progress: bool = True,
+    ema_span_override: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Expanding-window GMM from ``test_start`` with:
     - expanding StandardScaler (not EWZ)
     - temporal Hungarian in raw space every month
-    - K=3/K=4: monthly economic relabeling, no dwell/island cleanup
-    - K=5: January economic relabeling, asymmetric dwell (no island suppression
-      by default — see ``use_island_suppression``)
+    - K=3/K=4: monthly economic relabeling, no dwell cleanup
+    - K=5: January economic relabeling + asymmetric dwell hysteresis
     - Layer 1: moderate EMA (K=3/K=4: span 3 / 60% raw; K=5: span 9 / 33% raw)
 
-    Island suppression is off by default for all ``k`` so ``Regime`` has no
-    retroactive relabeling or confirmation lag. Pass ``use_island_suppression=True``
-    only for non-trading display experiments.
+    All steps are causal: each month is fit on prior data only, EMA and dwell
+    rules use trailing information, and backtests apply an additional 1-month
+    execution lag on portfolio weights.
+
+    ``ema_span_override``: if set, replaces the default EMA span from
+    ``_wf_smoothing_config``. Used by the sensitivity grid (Phase 3) to sweep
+    over half-life values without touching the production defaults.
     """
     dates = features.index
     n_obs = len(dates)
@@ -285,12 +246,12 @@ def run_walk_forward(
 
     cfg = _gmm_config(k)
     ema_span, prob_raw_weight = _wf_smoothing_config(k)
+    if ema_span_override is not None:
+        ema_span = int(ema_span_override)
     if map_clusters_monthly is None:
         map_clusters_monthly = k in {3, 4}
     if use_dwell_hysteresis is None:
         use_dwell_hysteresis = k == 5
-    if use_island_suppression is None:
-        use_island_suppression = False
 
     gmm = GaussianMixture(
         n_components=k,
@@ -374,13 +335,6 @@ def run_walk_forward(
         )
     else:
         labels = candidates.copy()
-
-    if use_island_suppression:
-        labels = suppress_island_flickers(
-            labels,
-            crisis_probs,
-            crisis_keep_prob=crisis_keep_prob,
-        )
 
     results["Regime"] = labels
     results["Regime_Name"] = [regime_names_from_k(k)[r] for r in results["Regime"]]
