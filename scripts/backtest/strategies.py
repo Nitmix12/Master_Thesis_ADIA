@@ -421,14 +421,37 @@ DATA_DRIVEN_STRATEGY_K: dict[str, int] = {
 def data_driven_portfolio_weights(
     signal: RegimeSignal,
     portfolios: dict[int, np.ndarray],
+    *,
+    soft: bool = False,
 ) -> StrategyWeights:
     """
-    Hard regime switch to frozen MV-optimal weights (training 1971–1990 only).
+    Frozen MV-optimal weights (training 1971–1990 only) on (SPXT, LUATTRUU, BCOMTR).
 
-  Each month uses the portfolio vector ``portfolios[regime_id]`` on
-    (SPXT, LUATTRUU, BCOMTR).
+    Hard: month t uses ``portfolios[regime_id]``.
+    Soft: ``w_t = Σ_k p_k(t) · w_k`` from walk-forward regime probabilities.
     """
     idx = signal.index
+
+    if soft:
+        probs = signal.probabilities.reindex(idx).fillna(0.0)
+        w_eq = pd.Series(0.0, index=idx)
+        w_sh = pd.Series(0.0, index=idx)
+        w_cm = pd.Series(0.0, index=idx)
+        for regime_id, vec in portfolios.items():
+            col = f"Prob_Regime{int(regime_id)}"
+            if col not in probs.columns:
+                continue
+            p = probs[col].astype(float)
+            w_eq = w_eq + p * float(vec[0])
+            w_sh = w_sh + p * float(vec[1])
+            w_cm = w_cm + p * float(vec[2])
+        return StrategyWeights(
+            kind="three",
+            equity=w_eq.reindex(idx).fillna(EW_THREE_WEIGHT),
+            safe_haven=w_sh.reindex(idx).fillna(EW_THREE_WEIGHT),
+            commodity=w_cm.reindex(idx).fillna(EW_THREE_WEIGHT),
+        )
+
     rid = signal.regime_id.reindex(idx).astype(int)
 
     def _weight(regime_id: int, asset_idx: int) -> float:
@@ -458,7 +481,7 @@ def _make_data_driven_builder(expected_k: int):
                 f"data_driven_{expected_k} requires K={expected_k} signals, got K={signal.k}"
             )
         portfolios = load_regime_portfolios(expected_k)
-        return data_driven_portfolio_weights(signal, portfolios)
+        return data_driven_portfolio_weights(signal, portfolios, soft=soft)
 
     return builder
 

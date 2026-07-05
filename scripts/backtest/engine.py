@@ -499,7 +499,7 @@ def run_strategy_comparison_cell(
             signal=sig_map[k_dd],
             monthly_contribution=monthly_contribution,
         )
-        _run(sig_map[k_dd], f"K={k_dd} hard")
+        _run(sig_map[k_dd], f"K={k_dd} {'soft' if soft else 'hard'}")
     else:
         _append_benchmark_curves(
             results,
@@ -527,10 +527,13 @@ def run_data_driven_overview_cell(
     signals_k4: Any = None,
     signals_k5: Any = None,
     monthly_contribution: float = DEFAULT_MONTHLY_CONTRIBUTION,
-    title: str = "Data-driven strategies (K=3 / K=4 / K=5) vs benchmarks",
+    title: str | None = None,
+    soft: bool = False,
 ) -> pd.DataFrame:
     """
     Single comparison plot: B0, B1, and data_driven_3/4/5 (each on matching K signals).
+
+    Set ``soft=True`` for probability-weighted portfolio blends.
     """
     from scripts.backtest.signals import load_walk_forward_signals
     from scripts.backtest.strategies import (
@@ -538,6 +541,10 @@ def run_data_driven_overview_cell(
         DATA_DRIVEN_STRATEGY_K,
         STRATEGY_BUILDERS,
     )
+
+    mode = "soft" if soft else "hard"
+    if title is None:
+        title = f"Data-driven strategies (K=3 / K=4 / K=5, {mode}) vs benchmarks"
 
     if returns_panel is None:
         returns_panel = load_backtest_panel()
@@ -562,13 +569,13 @@ def run_data_driven_overview_cell(
         metrics_rows.append(m)
 
     for strategy_key, k in DATA_DRIVEN_STRATEGY_K.items():
-        label = f"Data-driven K={k}"
-        w = STRATEGY_BUILDERS[strategy_key](sig_map[k], soft=False)
+        label = f"Data-driven K={k} ({mode})"
+        w = STRATEGY_BUILDERS[strategy_key](sig_map[k], soft=soft)
         bt = run_strategy_backtest(w, returns_panel)
         results[label] = bt
         m = compute_metrics(bt, monthly_contribution=monthly_contribution, label=label)
         m["Strategy"] = strategy_key
-        m["Mode"] = "hard"
+        m["Mode"] = mode
         metrics_rows.append(m)
 
     metrics_df = pd.DataFrame(metrics_rows).set_index("Label")
