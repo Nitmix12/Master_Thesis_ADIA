@@ -3,8 +3,8 @@ Data-driven regime portfolios via static GMM + mean-variance optimization.
 
 Training uses features from ``train_start`` through ``train_end`` only (default
 1971-03-31 → 1990-12-31). Regimes are identified in 17-dimensional factor space;
-optimal weights are computed on the three investable sleeves (SPXT, LUATTRUU,
-BCOMTR) using each component's conditional mean and covariance.
+optimal weights are computed on investable sleeves only (default: SPXT, LUATTRUU,
+BCOMTR). VIX, USGG3M, and LUACOAS enter regime detection but are not allocable.
 """
 
 from __future__ import annotations
@@ -22,25 +22,17 @@ from sklearn.preprocessing import StandardScaler
 from scripts.gmm_pipeline import _gmm_config, regime_names_from_k
 from scripts.paths import OUTPUT_DIR, load_features
 from scripts.regime_labeling import map_clusters
-
-EQUITY_COL = "SPXT"
-SAFE_HAVEN_COL = "LUATTRUU"
-COMMODITY_COL = "BCOMTR"
-ALT_BOND_COL = "LF98TRUU"
-EM_EQUITY_COL = "MXEF"
-TIPS_COL = "BCIT1T"
-INVESTABLE_COLS: tuple[str, ...] = (EQUITY_COL, SAFE_HAVEN_COL, COMMODITY_COL)
-CORE6_COLS: tuple[str, ...] = (
-    EQUITY_COL,
-    SAFE_HAVEN_COL,
-    ALT_BOND_COL,
+from scripts.backtest.loaders import (
     COMMODITY_COL,
-    EM_EQUITY_COL,
-    TIPS_COL,
+    EQUITY_COL,
+    INVESTABLE_14_COLS,
+    SAFE_HAVEN_COL,
 )
+
+INVESTABLE_COLS: tuple[str, ...] = (EQUITY_COL, SAFE_HAVEN_COL, COMMODITY_COL)
 PORTFOLIO_VARIANTS: dict[str, tuple[str, ...]] = {
     "default": INVESTABLE_COLS,
-    "core6": CORE6_COLS,
+    "14": INVESTABLE_14_COLS,
 }
 DEFAULT_TRAIN_START = "1971-03-31"
 DEFAULT_TRAIN_END = "1990-12-31"

@@ -10,7 +10,11 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from scripts.backtest.loaders import CORE6_COLS, EW_SIX_WEIGHT, EW_THREE_WEIGHT
+from scripts.backtest.loaders import (
+    EW14_WEIGHT,
+    EW_THREE_WEIGHT,
+    INVESTABLE_14_COLS,
+)
 from scripts.backtest.signals import RegimeSignal, regime_index_sets
 
 StrategyKind = Literal["single", "two", "three", "eq_sh_cash", "multi"]
@@ -91,12 +95,12 @@ def buy_and_hold_ew_three(signal: RegimeSignal) -> StrategyWeights:
     )
 
 
-def buy_and_hold_ew_six(signal: RegimeSignal) -> StrategyWeights:
-    """B2: equal-weight buy & hold on the six-asset extended universe (1/6 each)."""
+def buy_and_hold_ew14(signal: RegimeSignal) -> StrategyWeights:
+    """B2: equal-weight buy & hold on the 14 TRS-investable factors (1/14 each)."""
     idx = signal.index
-    w = EW_SIX_WEIGHT
-    multi = pd.DataFrame({col: w for col in CORE6_COLS}, index=idx)
-    return StrategyWeights(kind="multi", multi=multi, asset_columns=CORE6_COLS)
+    w = EW14_WEIGHT
+    multi = pd.DataFrame({col: w for col in INVESTABLE_14_COLS}, index=idx)
+    return StrategyWeights(kind="multi", multi=multi, asset_columns=INVESTABLE_14_COLS)
 
 
 def risk_on_off_weights(
@@ -547,32 +551,54 @@ def _make_data_driven_builder(expected_k: int):
     return builder
 
 
-def _make_data_driven_core6_builder(expected_k: int):
+def _make_data_driven_multi_builder(
+    expected_k: int,
+    *,
+    variant: str,
+    asset_columns: tuple[str, ...],
+    ew_fallback_weight: float,
+    strategy_suffix: str,
+):
     def builder(signal: RegimeSignal, *, soft: bool = False) -> StrategyWeights:
         from scripts.portfolio_allocation import load_regime_portfolios
 
         if signal.k != expected_k:
             raise ValueError(
-                f"data_driven_{expected_k}_core6 requires K={expected_k} signals, got K={signal.k}"
+                f"data_driven_{expected_k}_{strategy_suffix} requires K={expected_k} signals, "
+                f"got K={signal.k}"
             )
-        portfolios = load_regime_portfolios(expected_k, variant="core6")
+        portfolios = load_regime_portfolios(expected_k, variant=variant)
         return data_driven_multi_weights(
             signal,
             portfolios,
-            CORE6_COLS,
-            ew_fallback_weight=EW_SIX_WEIGHT,
+            asset_columns,
+            ew_fallback_weight=ew_fallback_weight,
             soft=soft,
         )
 
     return builder
 
 
-BENCHMARK_STRATEGY_KEYS = frozenset({"buy_and_hold", "buy_and_hold_ew_three", "buy_and_hold_ew_six"})
+def _make_data_driven_14_builder(expected_k: int):
+    return _make_data_driven_multi_builder(
+        expected_k,
+        variant="14",
+        asset_columns=INVESTABLE_14_COLS,
+        ew_fallback_weight=EW14_WEIGHT,
+        strategy_suffix="14",
+    )
+
+
+BENCHMARK_STRATEGY_KEYS = frozenset({
+    "buy_and_hold",
+    "buy_and_hold_ew_three",
+    "buy_and_hold_ew14",
+})
 
 BENCHMARK_DISPLAY_NAMES: dict[str, str] = {
     "buy_and_hold": "B0 — SPXT buy & hold",
     "buy_and_hold_ew_three": "B1 — EW3 buy & hold (SPXT / LUATTRUU / BCOMTR)",
-    "buy_and_hold_ew_six": "B2 — EW6 buy & hold (SPXT / LUATTRUU / LF98TRUU / BCOMTR / MXEF / BCIT1T)",
+    "buy_and_hold_ew14": "B2 — EW14 buy & hold (14 TRS-investable factors; excl. VIX / USGG3M / LUACOAS)",
 }
 
 BENCHMARK_CURVE_LABELS: dict[str, str] = {
@@ -580,20 +606,20 @@ BENCHMARK_CURVE_LABELS: dict[str, str] = {
     "buy_and_hold_ew_three": "B1 — EW3 B&H",
 }
 
-DATA_DRIVEN_CORE6_STRATEGY_K: dict[str, int] = {
-    "data_driven_3_core6": 3,
-    "data_driven_4_core6": 4,
-    "data_driven_5_core6": 5,
+DATA_DRIVEN_14_STRATEGY_K: dict[str, int] = {
+    "data_driven_3_14": 3,
+    "data_driven_4_14": 4,
+    "data_driven_5_14": 5,
 }
 
-CORE6_BENCHMARK_CURVE_LABELS: dict[str, str] = {
-    "buy_and_hold_ew_six": "B2 — EW6 B&H",
+EW14_BENCHMARK_CURVE_LABELS: dict[str, str] = {
+    "buy_and_hold_ew14": "B2 — EW14 B&H",
 }
 
 STRATEGY_BUILDERS = {
     "buy_and_hold": lambda sig, soft=False: buy_and_hold(sig),
     "buy_and_hold_ew_three": lambda sig, soft=False: buy_and_hold_ew_three(sig),
-    "buy_and_hold_ew_six": lambda sig, soft=False: buy_and_hold_ew_six(sig),
+    "buy_and_hold_ew14": lambda sig, soft=False: buy_and_hold_ew14(sig),
     "risk_on_off": risk_on_off_weights,
     "safe_haven": safe_haven_weights,
     "all_weather": all_weather_weights,
@@ -607,7 +633,7 @@ STRATEGY_BUILDERS = {
     "data_driven_3": _make_data_driven_builder(3),
     "data_driven_4": _make_data_driven_builder(4),
     "data_driven_5": _make_data_driven_builder(5),
-    "data_driven_3_core6": _make_data_driven_core6_builder(3),
-    "data_driven_4_core6": _make_data_driven_core6_builder(4),
-    "data_driven_5_core6": _make_data_driven_core6_builder(5),
+    "data_driven_3_14": _make_data_driven_14_builder(3),
+    "data_driven_4_14": _make_data_driven_14_builder(4),
+    "data_driven_5_14": _make_data_driven_14_builder(5),
 }

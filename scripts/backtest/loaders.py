@@ -21,17 +21,29 @@ TIPS_COL = "BCIT1T"
 EW_THREE_COLS: tuple[str, ...] = (EQUITY_COL, SAFE_HAVEN_COL, COMMODITY_COL)
 EW_THREE_WEIGHT: float = 1.0 / 3.0
 
-# Extended six-asset investable universe (total-return indices in features.csv).
-CORE6_COLS: tuple[str, ...] = (
+# Per supervisor guidance: 14 of 17 GMM factors are investable via TRS; only these
+# three are regime signals only (not allocable sleeves).
+NON_INVESTABLE_SIGNAL_COLS: tuple[str, ...] = ("VIX", "USGG3M", "LUACOAS")
+
+# All features.csv columns except VIX, USGG3M, LUACOAS (order preserved).
+INVESTABLE_14_COLS: tuple[str, ...] = (
     EQUITY_COL,
     SAFE_HAVEN_COL,
     ALT_BOND_COL,
     COMMODITY_COL,
     EM_EQUITY_COL,
     TIPS_COL,
+    "DXY",
+    "NEIXCTAT",
+    "M1WOSC",
+    "M1WO000V",
+    "M1WOMOM",
+    "M1WOQU",
+    "M1WOMVOL",
+    "DBFXCARU",
 )
-EW_SIX_COLS: tuple[str, ...] = CORE6_COLS
-EW_SIX_WEIGHT: float = 1.0 / 6.0
+EW14_COLS: tuple[str, ...] = INVESTABLE_14_COLS
+EW14_WEIGHT: float = 1.0 / len(INVESTABLE_14_COLS)
 
 
 def load_backtest_panel(
@@ -56,20 +68,20 @@ def load_backtest_panel(
     return panel
 
 
-def load_core6_backtest_panel(
+def load_ew14_backtest_panel(
     *,
     test_start: str = DEFAULT_TEST_START,
     features_path: Path | None = None,
 ) -> pd.DataFrame:
     """
-    Monthly returns for the six-asset extended investable universe.
+    Monthly returns for the 14-asset TRS-investable universe.
 
-    Columns: SPXT, LUATTRUU, LF98TRUU, BCOMTR, MXEF, BCIT1T.
+    Excludes VIX, USGG3M, LUACOAS (regime signals only).
     """
     features = load_features() if features_path is None else pd.read_csv(
         features_path, index_col=0, parse_dates=True
     ).sort_index()
-    panel = features[list(CORE6_COLS)].apply(pd.to_numeric, errors="coerce")
+    panel = features[list(INVESTABLE_14_COLS)].apply(pd.to_numeric, errors="coerce")
     panel = panel.loc[panel.index >= pd.Timestamp(test_start)].dropna(how="any")
     return panel
 

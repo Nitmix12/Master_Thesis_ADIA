@@ -13,7 +13,7 @@ from scripts.backtest.loaders import (
     EQUITY_COL,
     SAFE_HAVEN_COL,
     load_backtest_panel,
-    load_core6_backtest_panel,
+    load_ew14_backtest_panel,
 )
 from scripts.backtest.strategies import StrategyWeights
 
@@ -508,7 +508,7 @@ def run_strategy_comparison_cell(
     from scripts.backtest.signals import load_walk_forward_signals
     from scripts.backtest.strategies import (
         BENCHMARK_STRATEGY_KEYS,
-        DATA_DRIVEN_CORE6_STRATEGY_K,
+        DATA_DRIVEN_14_STRATEGY_K,
         DATA_DRIVEN_STRATEGY_K,
         STRATEGY_BUILDERS,
     )
@@ -527,8 +527,8 @@ def run_strategy_comparison_cell(
     metrics_rows: list[pd.Series] = []
 
     def _backtest_panel_for(strategy_key: str) -> pd.DataFrame:
-        if strategy_key == "buy_and_hold_ew_six" or strategy_key in DATA_DRIVEN_CORE6_STRATEGY_K:
-            return load_core6_backtest_panel()
+        if strategy_key == "buy_and_hold_ew14" or strategy_key in DATA_DRIVEN_14_STRATEGY_K:
+            return load_ew14_backtest_panel()
         return returns_panel
 
     def _run(sig: Any, tag: str, *, panel: pd.DataFrame | None = None) -> None:
@@ -554,28 +554,28 @@ def run_strategy_comparison_cell(
             monthly_contribution=monthly_contribution,
         )
         _run(sig_map[k_dd], f"K={k_dd} {'soft' if soft else 'hard'}")
-    elif strategy_key in DATA_DRIVEN_CORE6_STRATEGY_K:
-        from scripts.backtest.strategies import CORE6_BENCHMARK_CURVE_LABELS
+    elif strategy_key in DATA_DRIVEN_14_STRATEGY_K:
+        from scripts.backtest.strategies import EW14_BENCHMARK_CURVE_LABELS
 
-        k_dd = DATA_DRIVEN_CORE6_STRATEGY_K[strategy_key]
+        k_dd = DATA_DRIVEN_14_STRATEGY_K[strategy_key]
         sig_map = {3: signals_k3, 4: signals_k4, 5: signals_k5}
         sig = sig_map[k_dd]
-        core6_panel = load_core6_backtest_panel()
-        common = core6_panel.index.intersection(sig.index)
-        core6_panel = core6_panel.reindex(common)
+        ew14_panel = load_ew14_backtest_panel()
+        common = ew14_panel.index.intersection(sig.index)
+        ew14_panel = ew14_panel.reindex(common)
 
-        for bench_key, bench_label in CORE6_BENCHMARK_CURVE_LABELS.items():
+        for bench_key, bench_label in EW14_BENCHMARK_CURVE_LABELS.items():
             if bench_label in results:
                 continue
             w_bench = STRATEGY_BUILDERS[bench_key](sig, soft=False)
-            bt_bench = run_strategy_backtest(w_bench, core6_panel)
+            bt_bench = run_strategy_backtest(w_bench, ew14_panel)
             results[bench_label] = bt_bench
             metrics_rows.append(
                 compute_metrics(bt_bench, monthly_contribution=monthly_contribution, label=bench_label)
             )
 
         w = builder(sig, soft=bool(soft))
-        bt = run_strategy_backtest(w, core6_panel)
+        bt = run_strategy_backtest(w, ew14_panel)
         tag = f"K={k_dd} {'soft' if soft else 'hard'}"
         results[tag] = bt
         metrics_rows.append(
@@ -665,7 +665,7 @@ def run_data_driven_overview_cell(
     return metrics_df
 
 
-def run_data_driven_core6_overview_cell(
+def run_data_driven_14_overview_cell(
     *,
     returns_panel: pd.DataFrame | None = None,
     signals_k3: Any = None,
@@ -676,23 +676,24 @@ def run_data_driven_core6_overview_cell(
     soft: bool = False,
 ) -> pd.DataFrame:
     """
-    Six-asset data-driven overview: B2 (EW6) vs data_driven_3/4/5_core6.
+    Fourteen-asset data-driven overview: B2 (EW14) vs data_driven_3/4/5_14.
 
+    Investable universe excludes VIX, USGG3M, LUACOAS (regime signals only).
     Set ``soft=True`` for probability-weighted portfolio blends.
     """
     from scripts.backtest.signals import load_walk_forward_signals
     from scripts.backtest.strategies import (
-        CORE6_BENCHMARK_CURVE_LABELS,
-        DATA_DRIVEN_CORE6_STRATEGY_K,
+        DATA_DRIVEN_14_STRATEGY_K,
+        EW14_BENCHMARK_CURVE_LABELS,
         STRATEGY_BUILDERS,
     )
 
     mode_label = "probability-weighted" if soft else "hard"
     if title is None:
-        title = f"Data-driven CORE6 ({mode_label}) — K=3 / K=4 / K=5 vs EW6"
+        title = f"Data-driven 14 assets ({mode_label}) — K=3 / K=4 / K=5 vs EW14"
 
     if returns_panel is None:
-        returns_panel = load_core6_backtest_panel()
+        returns_panel = load_ew14_backtest_panel()
     if signals_k3 is None:
         signals_k3 = load_walk_forward_signals(3)
     if signals_k4 is None:
@@ -704,7 +705,7 @@ def run_data_driven_core6_overview_cell(
     results: dict[str, pd.DataFrame] = {}
     metrics_rows: list[pd.Series] = []
 
-    bench_key, bench_label = next(iter(CORE6_BENCHMARK_CURVE_LABELS.items()))
+    bench_key, bench_label = next(iter(EW14_BENCHMARK_CURVE_LABELS.items()))
     w_bench = STRATEGY_BUILDERS[bench_key](signals_k4, soft=False)
     bt_bench = run_strategy_backtest(w_bench, returns_panel)
     results[bench_label] = bt_bench
@@ -713,8 +714,8 @@ def run_data_driven_core6_overview_cell(
     m_bench["Mode"] = "baseline"
     metrics_rows.append(m_bench)
 
-    for strategy_key, k in DATA_DRIVEN_CORE6_STRATEGY_K.items():
-        label = f"Data-driven K={k} ({mode_label})"
+    for strategy_key, k in DATA_DRIVEN_14_STRATEGY_K.items():
+        label = f"Data-driven 14 assets K={k} ({mode_label})"
         w = STRATEGY_BUILDERS[strategy_key](sig_map[k], soft=soft)
         bt = run_strategy_backtest(w, returns_panel)
         results[label] = bt
