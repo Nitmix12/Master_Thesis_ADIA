@@ -26,7 +26,22 @@ from scripts.regime_labeling import map_clusters
 EQUITY_COL = "SPXT"
 SAFE_HAVEN_COL = "LUATTRUU"
 COMMODITY_COL = "BCOMTR"
+ALT_BOND_COL = "LF98TRUU"
+EM_EQUITY_COL = "MXEF"
+TIPS_COL = "BCIT1T"
 INVESTABLE_COLS: tuple[str, ...] = (EQUITY_COL, SAFE_HAVEN_COL, COMMODITY_COL)
+CORE6_COLS: tuple[str, ...] = (
+    EQUITY_COL,
+    SAFE_HAVEN_COL,
+    ALT_BOND_COL,
+    COMMODITY_COL,
+    EM_EQUITY_COL,
+    TIPS_COL,
+)
+PORTFOLIO_VARIANTS: dict[str, tuple[str, ...]] = {
+    "default": INVESTABLE_COLS,
+    "core6": CORE6_COLS,
+}
 DEFAULT_TRAIN_START = "1971-03-31"
 DEFAULT_TRAIN_END = "1990-12-31"
 DEFAULT_RIDGE = 1e-5
@@ -178,11 +193,12 @@ def build_regime_portfolios(
     train_end: str = DEFAULT_TRAIN_END,
     random_state: int = 42,
     ridge: float = DEFAULT_RIDGE,
+    investable_cols: tuple[str, ...] = INVESTABLE_COLS,
 ) -> pd.DataFrame:
     """
     Fit training GMM and return a table of MV-optimal weights per regime.
 
-    Columns: regime_id, regime_name, w_SPXT, w_LUATTRUU, w_BCOMTR
+    Weight columns follow ``investable_cols`` (``w_<TICKER>`` per asset).
     """
     gmm, scaler, mapping, feature_cols = fit_training_gmm(
         features,
@@ -200,33 +216,40 @@ def build_regime_portfolios(
             feature_cols,
             mapping,
             regime_id,
+            investable_cols=investable_cols,
             ridge=ridge,
         )
-        rows.append(
-            {
-                "regime_id": regime_id,
-                "regime_name": names[regime_id],
-                f"w_{EQUITY_COL}": float(weights[0]),
-                f"w_{SAFE_HAVEN_COL}": float(weights[1]),
-                f"w_{COMMODITY_COL}": float(weights[2]),
-            }
-        )
+        row: dict = {
+            "regime_id": regime_id,
+            "regime_name": names[regime_id],
+        }
+        for col, w in zip(investable_cols, weights):
+            row[f"w_{col}"] = float(w)
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
-def portfolio_output_path(k: int, *, outputs_dir: Path | None = None) -> Path:
+def portfolio_output_path(
+    k: int,
+    *,
+    variant: str = "default",
+    outputs_dir: Path | None = None,
+) -> Path:
     out = outputs_dir or OUTPUT_DIR
-    return out / f"data_driven_portfolios_k{k}.csv"
+    if variant == "default":
+        return out / f"data_driven_portfolios_k{k}.csv"
+    return out / f"data_driven_portfolios_k{k}_{variant}.csv"
 
 
 def save_regime_portfolios(
     table: pd.DataFrame,
     k: int,
     *,
+    variant: str = "default",
     outputs_dir: Path | None = None,
 ) -> Path:
     """Persist frozen regime portfolio weights."""
-    path = portfolio_output_path(k, outputs_dir=outputs_dir)
+    path = portfolio_output_path(k, variant=variant, outputs_dir=outputs_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     table.to_csv(path, index=False)
     return path
@@ -235,14 +258,18 @@ def save_regime_portfolios(
 def load_regime_portfolios(
     k: int,
     *,
+    variant: str = "default",
+    investable_cols: tuple[str, ...] | None = None,
     outputs_dir: Path | None = None,
 ) -> Dict[int, np.ndarray]:
     """
-    Load frozen portfolios as ``{regime_id: [w_eq, w_sh, w_cm]}``.
+    Load frozen portfolios as ``{regime_id: weight_vector}``.
 
     Raises ``FileNotFoundError`` if the CSV has not been generated yet.
     """
-    path = portfolio_output_path(k, outputs_dir=outputs_dir)
+    if investable_cols is None:
+        investable_cols = PORTFOLIO_VARIANTS.get(variant, INVESTABLE_COLS)
+    path = portfolio_output_path(k, variant=variant, outputs_dir=outputs_dir)
     if not path.exists():
         raise FileNotFoundError(
             f"Missing {path}. Run notebooks/backtest/03_data_driven_optimal_weights.ipynb first."
@@ -252,11 +279,7 @@ def load_regime_portfolios(
     for _, row in df.iterrows():
         rid = int(row["regime_id"])
         portfolios[rid] = np.array(
-            [
-                float(row[f"w_{EQUITY_COL}"]),
-                float(row[f"w_{SAFE_HAVEN_COL}"]),
-                float(row[f"w_{COMMODITY_COL}"]),
-            ],
+            [float(row[f"w_{col}"]) for col in investable_cols],
             dtype=float,
         )
     return portfolios
@@ -269,10 +292,14 @@ def train_and_save_all(
     train_start: str = DEFAULT_TRAIN_START,
     train_end: str = DEFAULT_TRAIN_END,
     outputs_dir: Path | None = None,
+    variant: str = "default",
+    investable_cols: tuple[str, ...] | None = None,
 ) -> dict[int, pd.DataFrame]:
     """Fit and save data-driven portfolios for K=3, K=4, and K=5."""
     if features is None:
         features = load_features()
+    if investable_cols is None:
+        investable_cols = PORTFOLIO_VARIANTS.get(variant, INVESTABLE_COLS)
     tables: dict[int, pd.DataFrame] = {}
     for k in ks:
         table = build_regime_portfolios(
@@ -280,8 +307,9 @@ def train_and_save_all(
             k,
             train_start=train_start,
             train_end=train_end,
+            investable_cols=investable_cols,
         )
-        save_regime_portfolios(table, k, outputs_dir=outputs_dir)
+        save_regime_portfolios(table, k, variant=variant, outputs_dir=outputs_dir)
         tables[k] = table
     return tables
 

@@ -10,10 +10,10 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from scripts.backtest.loaders import EW_THREE_WEIGHT
+from scripts.backtest.loaders import CORE6_COLS, EW_SIX_WEIGHT, EW_THREE_WEIGHT
 from scripts.backtest.signals import RegimeSignal, regime_index_sets
 
-StrategyKind = Literal["single", "two", "three", "eq_sh_cash"]
+StrategyKind = Literal["single", "two", "three", "eq_sh_cash", "multi"]
 
 # Equity exposure scaling for inverse-vol heuristic (regime-based vol targeting).
 INVERSE_VOL_SCALES: dict[int, float] = {
@@ -32,6 +32,8 @@ class StrategyWeights:
     safe_haven: pd.Series | None = None
     commodity: pd.Series | None = None
     cash: pd.Series | None = None
+    multi: pd.DataFrame | None = None
+    asset_columns: tuple[str, ...] | None = None
 
 
 def _sum_probs(probs: pd.DataFrame, regime_ids: list[int]) -> pd.Series:
@@ -87,6 +89,14 @@ def buy_and_hold_ew_three(signal: RegimeSignal) -> StrategyWeights:
         safe_haven=pd.Series(w, index=idx),
         commodity=pd.Series(w, index=idx),
     )
+
+
+def buy_and_hold_ew_six(signal: RegimeSignal) -> StrategyWeights:
+    """B2: equal-weight buy & hold on the six-asset extended universe (1/6 each)."""
+    idx = signal.index
+    w = EW_SIX_WEIGHT
+    multi = pd.DataFrame({col: w for col in CORE6_COLS}, index=idx)
+    return StrategyWeights(kind="multi", multi=multi, asset_columns=CORE6_COLS)
 
 
 def risk_on_off_weights(
@@ -472,6 +482,57 @@ def data_driven_portfolio_weights(
     )
 
 
+def data_driven_multi_weights(
+    signal: RegimeSignal,
+    portfolios: dict[int, np.ndarray],
+    asset_columns: tuple[str, ...],
+    *,
+    ew_fallback_weight: float,
+    soft: bool = False,
+) -> StrategyWeights:
+    """
+    Frozen MV-optimal weights on an N-asset investable universe.
+
+    Hard: month t uses ``portfolios[regime_id]``.
+    Soft: ``w_t = Σ_k p_k(t) · w_k`` from walk-forward regime probabilities.
+    """
+    idx = signal.index
+    n_assets = len(asset_columns)
+
+    if soft:
+        probs = signal.probabilities.reindex(idx).fillna(0.0)
+        weight_matrix = np.zeros((len(idx), n_assets), dtype=float)
+        for regime_id, vec in portfolios.items():
+            col = f"Prob_Regime{int(regime_id)}"
+            if col not in probs.columns:
+                continue
+            p = probs[col].astype(float).values[:, None]
+            weight_matrix = weight_matrix + p * np.asarray(vec, dtype=float)
+        multi = pd.DataFrame(weight_matrix, index=idx, columns=list(asset_columns))
+        row_sum = multi.sum(axis=1)
+        zero_rows = row_sum <= 0
+        if zero_rows.any():
+            multi.loc[zero_rows] = ew_fallback_weight
+    else:
+        rid = signal.regime_id.reindex(idx).astype(int)
+
+        def _weight(regime_id: int, asset_idx: int) -> float:
+            vec = portfolios.get(int(regime_id))
+            if vec is None:
+                return ew_fallback_weight
+            return float(vec[asset_idx])
+
+        multi = pd.DataFrame(
+            {
+                col: rid.map(lambda r, i=i: _weight(r, i)).astype(float)
+                for i, col in enumerate(asset_columns)
+            },
+            index=idx,
+        )
+
+    return StrategyWeights(kind="multi", multi=multi, asset_columns=asset_columns)
+
+
 def _make_data_driven_builder(expected_k: int):
     def builder(signal: RegimeSignal, *, soft: bool = False) -> StrategyWeights:
         from scripts.portfolio_allocation import load_regime_portfolios
@@ -486,11 +547,32 @@ def _make_data_driven_builder(expected_k: int):
     return builder
 
 
-BENCHMARK_STRATEGY_KEYS = frozenset({"buy_and_hold", "buy_and_hold_ew_three"})
+def _make_data_driven_core6_builder(expected_k: int):
+    def builder(signal: RegimeSignal, *, soft: bool = False) -> StrategyWeights:
+        from scripts.portfolio_allocation import load_regime_portfolios
+
+        if signal.k != expected_k:
+            raise ValueError(
+                f"data_driven_{expected_k}_core6 requires K={expected_k} signals, got K={signal.k}"
+            )
+        portfolios = load_regime_portfolios(expected_k, variant="core6")
+        return data_driven_multi_weights(
+            signal,
+            portfolios,
+            CORE6_COLS,
+            ew_fallback_weight=EW_SIX_WEIGHT,
+            soft=soft,
+        )
+
+    return builder
+
+
+BENCHMARK_STRATEGY_KEYS = frozenset({"buy_and_hold", "buy_and_hold_ew_three", "buy_and_hold_ew_six"})
 
 BENCHMARK_DISPLAY_NAMES: dict[str, str] = {
     "buy_and_hold": "B0 — SPXT buy & hold",
     "buy_and_hold_ew_three": "B1 — EW3 buy & hold (SPXT / LUATTRUU / BCOMTR)",
+    "buy_and_hold_ew_six": "B2 — EW6 buy & hold (SPXT / LUATTRUU / LF98TRUU / BCOMTR / MXEF / BCIT1T)",
 }
 
 BENCHMARK_CURVE_LABELS: dict[str, str] = {
@@ -498,9 +580,20 @@ BENCHMARK_CURVE_LABELS: dict[str, str] = {
     "buy_and_hold_ew_three": "B1 — EW3 B&H",
 }
 
+DATA_DRIVEN_CORE6_STRATEGY_K: dict[str, int] = {
+    "data_driven_3_core6": 3,
+    "data_driven_4_core6": 4,
+    "data_driven_5_core6": 5,
+}
+
+CORE6_BENCHMARK_CURVE_LABELS: dict[str, str] = {
+    "buy_and_hold_ew_six": "B2 — EW6 B&H",
+}
+
 STRATEGY_BUILDERS = {
     "buy_and_hold": lambda sig, soft=False: buy_and_hold(sig),
     "buy_and_hold_ew_three": lambda sig, soft=False: buy_and_hold_ew_three(sig),
+    "buy_and_hold_ew_six": lambda sig, soft=False: buy_and_hold_ew_six(sig),
     "risk_on_off": risk_on_off_weights,
     "safe_haven": safe_haven_weights,
     "all_weather": all_weather_weights,
@@ -514,4 +607,7 @@ STRATEGY_BUILDERS = {
     "data_driven_3": _make_data_driven_builder(3),
     "data_driven_4": _make_data_driven_builder(4),
     "data_driven_5": _make_data_driven_builder(5),
+    "data_driven_3_core6": _make_data_driven_core6_builder(3),
+    "data_driven_4_core6": _make_data_driven_core6_builder(4),
+    "data_driven_5_core6": _make_data_driven_core6_builder(5),
 }

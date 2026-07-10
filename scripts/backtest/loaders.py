@@ -13,10 +13,25 @@ DEFAULT_TEST_START = "1990-01-31"
 EQUITY_COL = "SPXT"
 SAFE_HAVEN_COL = "LUATTRUU"
 COMMODITY_COL = "BCOMTR"
+ALT_BOND_COL = "LF98TRUU"
+EM_EQUITY_COL = "MXEF"
+TIPS_COL = "BCIT1T"
 
 # Equal-weight three-asset benchmark (investable universe for regime strategies).
 EW_THREE_COLS: tuple[str, ...] = (EQUITY_COL, SAFE_HAVEN_COL, COMMODITY_COL)
 EW_THREE_WEIGHT: float = 1.0 / 3.0
+
+# Extended six-asset investable universe (total-return indices in features.csv).
+CORE6_COLS: tuple[str, ...] = (
+    EQUITY_COL,
+    SAFE_HAVEN_COL,
+    ALT_BOND_COL,
+    COMMODITY_COL,
+    EM_EQUITY_COL,
+    TIPS_COL,
+)
+EW_SIX_COLS: tuple[str, ...] = CORE6_COLS
+EW_SIX_WEIGHT: float = 1.0 / 6.0
 
 
 def load_backtest_panel(
@@ -37,6 +52,24 @@ def load_backtest_panel(
     panel = features[[EQUITY_COL, SAFE_HAVEN_COL, COMMODITY_COL]].apply(
         pd.to_numeric, errors="coerce"
     )
+    panel = panel.loc[panel.index >= pd.Timestamp(test_start)].dropna(how="any")
+    return panel
+
+
+def load_core6_backtest_panel(
+    *,
+    test_start: str = DEFAULT_TEST_START,
+    features_path: Path | None = None,
+) -> pd.DataFrame:
+    """
+    Monthly returns for the six-asset extended investable universe.
+
+    Columns: SPXT, LUATTRUU, LF98TRUU, BCOMTR, MXEF, BCIT1T.
+    """
+    features = load_features() if features_path is None else pd.read_csv(
+        features_path, index_col=0, parse_dates=True
+    ).sort_index()
+    panel = features[list(CORE6_COLS)].apply(pd.to_numeric, errors="coerce")
     panel = panel.loc[panel.index >= pd.Timestamp(test_start)].dropna(how="any")
     return panel
 

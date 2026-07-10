@@ -13,6 +13,7 @@ from scripts.backtest.loaders import (
     EQUITY_COL,
     SAFE_HAVEN_COL,
     load_backtest_panel,
+    load_core6_backtest_panel,
 )
 from scripts.backtest.strategies import StrategyWeights
 
@@ -200,6 +201,39 @@ def run_three_asset_backtest(
     )
 
 
+def run_multi_asset_backtest(
+    returns_panel: pd.DataFrame,
+    target_weights: pd.DataFrame,
+    asset_columns: tuple[str, ...],
+    *,
+    transaction_cost_bps: float = DEFAULT_TRANSACTION_COST_BPS,
+) -> pd.DataFrame:
+    """N-asset backtest with weights summing to 1 before execution lag."""
+    cols = list(asset_columns)
+    rets = returns_panel[cols].apply(pd.to_numeric, errors="coerce").dropna(how="any").sort_index()
+    idx = rets.index
+
+    w = target_weights.reindex(idx).ffill().fillna(0.0).clip(0.0, 1.0)
+    w = w.reindex(columns=cols, fill_value=0.0)
+    target = w.div(w.sum(axis=1).replace(0.0, np.nan), axis=0).fillna(0.0)
+    w_exec = target.shift(1).fillna(0.0)
+    gross_ret = (w_exec * rets).sum(axis=1)
+    turnover = (w_exec - w_exec.shift(1)).abs().sum(axis=1).fillna(w_exec.abs().sum(axis=1))
+    cost = turnover * (transaction_cost_bps / 10_000.0)
+    net_ret = gross_ret - cost
+    nav_net = (1.0 + net_ret).cumprod()
+    drawdown = (nav_net / nav_net.cummax()) - 1.0
+    return pd.DataFrame(
+        {
+            "Net_Return": net_ret,
+            "NAV_Net": nav_net,
+            "Drawdown_Net": drawdown,
+            "Turnover": turnover,
+        },
+        index=idx,
+    )
+
+
 def run_strategy_backtest(
     weights: StrategyWeights,
     returns_panel: pd.DataFrame,
@@ -243,6 +277,15 @@ def run_strategy_backtest(
             weights.equity,
             weights.safe_haven,
             weights.cash,
+            transaction_cost_bps=transaction_cost_bps,
+        )
+    if weights.kind == "multi":
+        if weights.multi is None or weights.asset_columns is None:
+            raise ValueError("multi-asset strategy requires multi weights and asset_columns")
+        return run_multi_asset_backtest(
+            returns_panel,
+            weights.multi,
+            weights.asset_columns,
             transaction_cost_bps=transaction_cost_bps,
         )
     raise ValueError(f"Unknown strategy kind: {weights.kind}")
@@ -463,7 +506,12 @@ def run_strategy_comparison_cell(
     Regime strategies also overlay B0 (SPXT) and B1 (EW3) benchmark curves.
     """
     from scripts.backtest.signals import load_walk_forward_signals
-    from scripts.backtest.strategies import BENCHMARK_STRATEGY_KEYS, STRATEGY_BUILDERS, DATA_DRIVEN_STRATEGY_K
+    from scripts.backtest.strategies import (
+        BENCHMARK_STRATEGY_KEYS,
+        DATA_DRIVEN_CORE6_STRATEGY_K,
+        DATA_DRIVEN_STRATEGY_K,
+        STRATEGY_BUILDERS,
+    )
 
     if returns_panel is None:
         returns_panel = load_backtest_panel()
@@ -478,12 +526,18 @@ def run_strategy_comparison_cell(
     results: dict[str, pd.DataFrame] = {}
     metrics_rows: list[pd.Series] = []
 
-    def _run(sig: Any, tag: str) -> None:
+    def _backtest_panel_for(strategy_key: str) -> pd.DataFrame:
+        if strategy_key == "buy_and_hold_ew_six" or strategy_key in DATA_DRIVEN_CORE6_STRATEGY_K:
+            return load_core6_backtest_panel()
+        return returns_panel
+
+    def _run(sig: Any, tag: str, *, panel: pd.DataFrame | None = None) -> None:
+        bt_panel = panel if panel is not None else _backtest_panel_for(strategy_key)
         if strategy_key in BENCHMARK_STRATEGY_KEYS:
             w = builder(sig, soft=False)
         else:
             w = builder(sig, soft=bool(soft))
-        bt = run_strategy_backtest(w, returns_panel)
+        bt = run_strategy_backtest(w, bt_panel)
         results[tag] = bt
         metrics_rows.append(compute_metrics(bt, monthly_contribution=monthly_contribution, label=tag))
 
@@ -500,6 +554,33 @@ def run_strategy_comparison_cell(
             monthly_contribution=monthly_contribution,
         )
         _run(sig_map[k_dd], f"K={k_dd} {'soft' if soft else 'hard'}")
+    elif strategy_key in DATA_DRIVEN_CORE6_STRATEGY_K:
+        from scripts.backtest.strategies import CORE6_BENCHMARK_CURVE_LABELS
+
+        k_dd = DATA_DRIVEN_CORE6_STRATEGY_K[strategy_key]
+        sig_map = {3: signals_k3, 4: signals_k4, 5: signals_k5}
+        sig = sig_map[k_dd]
+        core6_panel = load_core6_backtest_panel()
+        common = core6_panel.index.intersection(sig.index)
+        core6_panel = core6_panel.reindex(common)
+
+        for bench_key, bench_label in CORE6_BENCHMARK_CURVE_LABELS.items():
+            if bench_label in results:
+                continue
+            w_bench = STRATEGY_BUILDERS[bench_key](sig, soft=False)
+            bt_bench = run_strategy_backtest(w_bench, core6_panel)
+            results[bench_label] = bt_bench
+            metrics_rows.append(
+                compute_metrics(bt_bench, monthly_contribution=monthly_contribution, label=bench_label)
+            )
+
+        w = builder(sig, soft=bool(soft))
+        bt = run_strategy_backtest(w, core6_panel)
+        tag = f"K={k_dd} {'soft' if soft else 'hard'}"
+        results[tag] = bt
+        metrics_rows.append(
+            compute_metrics(bt, monthly_contribution=monthly_contribution, label=tag)
+        )
     else:
         _append_benchmark_curves(
             results,
@@ -577,6 +658,69 @@ def run_data_driven_overview_cell(
         m = compute_metrics(bt, monthly_contribution=monthly_contribution, label=label)
         m["Strategy"] = strategy_key
         m["Mode"] = mode
+        metrics_rows.append(m)
+
+    metrics_df = pd.DataFrame(metrics_rows).set_index("Label")
+    plot_strategy_report(results, metrics_df, title=title, monthly_contribution=monthly_contribution)
+    return metrics_df
+
+
+def run_data_driven_core6_overview_cell(
+    *,
+    returns_panel: pd.DataFrame | None = None,
+    signals_k3: Any = None,
+    signals_k4: Any = None,
+    signals_k5: Any = None,
+    monthly_contribution: float = DEFAULT_MONTHLY_CONTRIBUTION,
+    title: str | None = None,
+    soft: bool = False,
+) -> pd.DataFrame:
+    """
+    Six-asset data-driven overview: B2 (EW6) vs data_driven_3/4/5_core6.
+
+    Set ``soft=True`` for probability-weighted portfolio blends.
+    """
+    from scripts.backtest.signals import load_walk_forward_signals
+    from scripts.backtest.strategies import (
+        CORE6_BENCHMARK_CURVE_LABELS,
+        DATA_DRIVEN_CORE6_STRATEGY_K,
+        STRATEGY_BUILDERS,
+    )
+
+    mode_label = "probability-weighted" if soft else "hard"
+    if title is None:
+        title = f"Data-driven CORE6 ({mode_label}) — K=3 / K=4 / K=5 vs EW6"
+
+    if returns_panel is None:
+        returns_panel = load_core6_backtest_panel()
+    if signals_k3 is None:
+        signals_k3 = load_walk_forward_signals(3)
+    if signals_k4 is None:
+        signals_k4 = load_walk_forward_signals(4)
+    if signals_k5 is None:
+        signals_k5 = load_walk_forward_signals(5)
+
+    sig_map = {3: signals_k3, 4: signals_k4, 5: signals_k5}
+    results: dict[str, pd.DataFrame] = {}
+    metrics_rows: list[pd.Series] = []
+
+    bench_key, bench_label = next(iter(CORE6_BENCHMARK_CURVE_LABELS.items()))
+    w_bench = STRATEGY_BUILDERS[bench_key](signals_k4, soft=False)
+    bt_bench = run_strategy_backtest(w_bench, returns_panel)
+    results[bench_label] = bt_bench
+    m_bench = compute_metrics(bt_bench, monthly_contribution=monthly_contribution, label=bench_label)
+    m_bench["Strategy"] = bench_key
+    m_bench["Mode"] = "baseline"
+    metrics_rows.append(m_bench)
+
+    for strategy_key, k in DATA_DRIVEN_CORE6_STRATEGY_K.items():
+        label = f"Data-driven K={k} ({mode_label})"
+        w = STRATEGY_BUILDERS[strategy_key](sig_map[k], soft=soft)
+        bt = run_strategy_backtest(w, returns_panel)
+        results[label] = bt
+        m = compute_metrics(bt, monthly_contribution=monthly_contribution, label=label)
+        m["Strategy"] = strategy_key
+        m["Mode"] = "soft" if soft else "hard"
         metrics_rows.append(m)
 
     metrics_df = pd.DataFrame(metrics_rows).set_index("Label")
