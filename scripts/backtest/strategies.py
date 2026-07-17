@@ -439,7 +439,7 @@ def data_driven_portfolio_weights(
     soft: bool = False,
 ) -> StrategyWeights:
     """
-    Frozen MV-optimal weights (training 1971–1990 only) on (SPXT, LUATTRUU, BCOMTR).
+    Frozen MV-optimal weights (training 1971–1989 only) on (SPXT, LUATTRUU, BCOMTR).
 
     Hard: month t uses ``portfolios[regime_id]``.
     Soft: ``w_t = Σ_k p_k(t) · w_k`` from walk-forward regime probabilities.

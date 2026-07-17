@@ -363,43 +363,34 @@ def plot_strategy_report(
     monthly_contribution: float = DEFAULT_MONTHLY_CONTRIBUTION,
 ) -> plt.Figure:
     """Portfolio USD, drawdown, and metrics table for one or more K / variants."""
-    n = len(results_by_label)
     fig, axes = plt.subplots(2, 1, figsize=(12, 8), sharex=True, gridspec_kw={"height_ratios": [2, 1]})
     ax_val, ax_dd = axes
 
+    sharpe_by_label: dict[str, float] = {}
+    if not metrics_table.empty and "Sharpe" in metrics_table.columns:
+        for idx, row in metrics_table.iterrows():
+            sh = row.get("Sharpe", np.nan)
+            if np.isfinite(sh):
+                sharpe_by_label[str(idx)] = float(sh)
+
     for label, bt in results_by_label.items():
         port = dollar_portfolio_curve(bt["Net_Return"], monthly_contribution=monthly_contribution)
-        ax_val.plot(port.index, port.values, linewidth=1.4, label=label)
-        ax_dd.plot(bt.index, bt["Drawdown_Net"], linewidth=1.0, label=label)
+        # Single upper-left legend: series name + Sharpe (avoids a duplicate bottom-right box).
+        if label in sharpe_by_label:
+            legend_label = f"{label} (Sharpe={sharpe_by_label[label]:.2f})"
+        else:
+            legend_label = label
+        ax_val.plot(port.index, port.values, linewidth=1.4, label=legend_label)
+        ax_dd.plot(bt.index, bt["Drawdown_Net"], linewidth=1.0)
 
     ax_val.set_ylabel("Portfolio value (USD)")
     ax_val.set_title(title)
-    ax_val.legend(loc="upper left", fontsize=9)
+    ax_val.legend(loc="upper left", fontsize=9, framealpha=0.9)
     ax_val.grid(True, alpha=0.3)
 
     ax_dd.set_ylabel("Drawdown")
     ax_dd.set_xlabel("Date")
-    ax_dd.legend(loc="lower left", fontsize=9)
     ax_dd.grid(True, alpha=0.3)
-
-    # Sharpe annotation from metrics table
-    if not metrics_table.empty and "Sharpe" in metrics_table.columns:
-        lines = []
-        for idx, row in metrics_table.iterrows():
-            sh = row.get("Sharpe", np.nan)
-            if np.isfinite(sh):
-                lines.append(f"{idx}: Sharpe={sh:.2f}")
-        if lines:
-            ax_val.text(
-                0.99,
-                0.02,
-                "\n".join(lines),
-                transform=ax_val.transAxes,
-                ha="right",
-                va="bottom",
-                fontsize=9,
-                bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
-            )
 
     plt.tight_layout()
 

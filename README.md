@@ -57,7 +57,7 @@ Uses `walk_forward_k3.csv` / `walk_forward_k4.csv` / `walk_forward_k5.csv` with 
 # notebooks/backtest/01_strategy_comparison.ipynb            → backtest data_driven_3/4/5
 ```
 
-- **Training:** static GMM on **1971-03-31 → 1990-12-31** only (17 factors).
+- **Training:** static GMM on **1971-03-31 → 1989-12-31** only (17 factors). Ends before the OOS backtest so frozen MV weights have no look-ahead into 1990+.
 - **Weights:** long-only max-Sharpe MV on **SPXT / LUATTRUU / BCOMTR** per regime (μₖ, Σₖ subset).
-- **Artifacts:** `data/outputs/data_driven_portfolios_k{3,4,5}.csv` (frozen; never refit post-1990).
-- **Backtest:** `data_driven_k` uses walk-forward **K=k** signals; **hard** (label switch) and **soft** (`Σ p_k · w_k`) modes.
+- **Artifacts:** `data/outputs/data_driven_portfolios_k{3,4,5}.csv` (frozen; never refit from 1990 onward).
+- **Backtest:** from **1990-01-31**; `data_driven_k` uses walk-forward **K=k** signals; **hard** (label switch) and **soft** (`Σ p_k · w_k`) modes.

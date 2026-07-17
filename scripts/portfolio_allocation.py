@@ -2,7 +2,7 @@
 Data-driven regime portfolios via static GMM + mean-variance optimization.
 
 Training uses features from ``train_start`` through ``train_end`` only (default
-1971-03-31 → 1990-12-31). Regimes are identified in 17-dimensional factor space;
+1971-03-31 → 1989-12-31). Regimes are identified in 17-dimensional factor space;
 optimal weights are computed on investable sleeves only (default: SPXT, LUATTRUU,
 BCOMTR). VIX, USGG3M, and LUACOAS enter regime detection but are not allocable.
 """
@@ -35,7 +35,7 @@ PORTFOLIO_VARIANTS: dict[str, tuple[str, ...]] = {
     "14": INVESTABLE_14_COLS,
 }
 DEFAULT_TRAIN_START = "1971-03-31"
-DEFAULT_TRAIN_END = "1990-12-31"
+DEFAULT_TRAIN_END = "1989-12-31"
 DEFAULT_RIDGE = 1e-5
 
 
